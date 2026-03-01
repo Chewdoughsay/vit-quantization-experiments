@@ -74,9 +74,12 @@ ViT-FP8-experiments/
 ├── scripts/                     # Executable scripts
 │   ├── train.py                # Main training script (uses YAML configs)
 │   ├── evaluate_fp8_quantization.py  # FP8 post-training quantization evaluation
-│   ├── extract_metrics.py      # Metrics extraction and analysis
-│   ├── generate_plots.py       # Visualization generation
-│   └── compare_experiments.py  # Comprehensive experiment comparison
+│   ├── generate_report_plots.py      # Generate all report figures and summary
+│   └── extras/                 # Utility scripts (not used in main workflow)
+│       ├── extract_metrics.py      # Metrics extraction and analysis
+│       ├── generate_plots.py       # Per-experiment plot generation
+│       ├── compare_experiments.py  # Experiment comparison tables
+│       └── plot_hardware_stats.py  # Hardware monitoring plots
 │
 ├── results/                     # Experiment outputs
 │   ├── BaseFP32/
@@ -88,8 +91,7 @@ ViT-FP8-experiments/
 │   └── AugmFP16/
 │
 ├── data/                        # CIFAR-10 dataset (auto-downloaded)
-├── README.md                    # This file
-└── REFACTORING_PLAN.md         # Development history and roadmap
+└── README.md                    # This file
 ```
 
 ---
@@ -167,55 +169,19 @@ python scripts/train.py --config configs/AugmFP16.yaml --device cuda
 - **BaseFP16**: ~85-95 min (**~30% faster** than FP32!)
 - **AugmFP16**: ~90-100 min (best speed/accuracy trade-off)
 
-### 2. Comprehensive Experiment Comparison (For Reports)
+### 2. Generate Report Plots and Summary
 
-After running all experiments, generate complete analysis for your research report:
+After running all experiments and the FP8 evaluation, generate all publication-quality figures:
 
 ```bash
-python scripts/compare_experiments.py
+python scripts/generate_report_plots.py
 ```
 
-**Analyzes Everything:**
-- **Performance**: Best/final accuracy, overfitting gap, loss, convergence
-- **Timing**: Total duration, per-epoch stats with std dev
-- **Hardware**: CPU/memory utilization, thermal throttling
-- **Analysis**: FP16 speedup, best trade-offs, recommendations
-
-**Example Output:**
-```
-COMPREHENSIVE EXPERIMENT COMPARISON
-============================================================
-PERFORMANCE METRICS
-Metric                         | BaseFP32  | AugmFP32  | BaseFP16  | AugmFP16
-Best Val Accuracy              | 78.14%    | 83.62%    | 82.25%    | 83.29%
-Final Train Accuracy           | 96.50%    | 85.71%    | 97.62%    | 86.10%
-Overfitting Gap                | 18.37%    | 2.08%     | 15.37%    | 2.82%
-Final Val Loss                 | 0.9020    | 0.8807    | 0.9843    | 0.8886
-
-TIMING METRICS
-Total Time (hours)             | 6.38h     | 7.53h     | 7.36h     | 7.82h
-Time/Epoch (sec)               | 459.3s    | 542.2s    | 530.1s    | 563.3s
-Time/Epoch StdDev              | ±15.9s    | ±200.8s   | ±21.9s    | ±17.4s
-
-HARDWARE UTILIZATION
-CPU Average                    | 7.8%      | 12.7%     | 7.8%      | 7.1%
-Memory Average                 | 86.1%     | 86.9%     | 80.4%     | 83.9%
-Thermal Throttling             | No        | No        | No        | No
-============================================================
-
-ANALYSIS SUMMARY
-🏆 Best Accuracy: AugmFP16 (83.29%)
-🎯 Best Generalization: AugmFP32 (2.08% overfitting)
-⚡ Fastest Training: BaseFP32 (6.38 hours)
-
-📊 FP16 Speedup: 1.25x faster (20% time reduction)
-💡 Recommended: AugmFP16 (best speed/accuracy trade-off!)
-```
-
-**Output Files:**
-- `results/comparison_table.csv` - Tabular data for analysis and reporting
-- `results/experiment_comparison.json` - Structured data for plotting scripts
-- Console: Formatted tables with analysis summary
+**Generates:**
+- All comparison plots (`results/report_plots/`)
+- `results/experiment_comparison.json` — rebuilt from raw data
+- `results/comparison_table.csv` — tabular metrics
+- `results/summary.md` — markdown summary with key findings
 
 ### 3. FP8 Quantization Evaluation
 
@@ -241,41 +207,23 @@ python scripts/evaluate_fp8_quantization.py
 
 **Note:** This is NOT a training script - it's a conversion and evaluation test to assess FP8 viability for inference deployment.
 
-### 4. Extract Metrics
+### 4. Utility Scripts (extras/)
+
+Additional standalone utilities are available in `scripts/extras/`:
 
 ```bash
-# Single experiment summary
-python scripts/extract_metrics.py --experiment results/BaseFP32
+# Single experiment metrics summary
+python scripts/extras/extract_metrics.py --experiment results/BaseFP32 --detailed
 
-# Detailed statistics
-python scripts/extract_metrics.py --experiment results/BaseFP32 --detailed
+# Per-experiment training curves
+python scripts/extras/generate_plots.py --experiment results/BaseFP32
 
-# Compare multiple experiments
-python scripts/extract_metrics.py --compare results/BaseFP32 results/BaseFP16 results/AugmFP16
+# Side-by-side comparison table
+python scripts/extras/compare_experiments.py
 
-# Extract all experiments and save to CSV
-python scripts/extract_metrics.py --all --output metrics_summary.csv
+# Hardware monitoring plots
+python scripts/extras/plot_hardware_stats.py --all
 ```
-
-### 5. Generate Plots
-
-```bash
-# Plot single experiment
-python scripts/generate_plots.py --experiment results/BaseFP32
-
-# Compare multiple experiments
-python scripts/generate_plots.py --compare results/BaseFP32 results/BaseFP16 results/AugmFP16
-
-# Generate all plots
-python scripts/generate_plots.py --all
-```
-
-**Generated Plots:**
-- Training/validation loss curves
-- Training/validation accuracy curves
-- Learning rate schedules
-- Hardware monitoring (CPU, memory, thermal)
-- Multi-experiment comparisons
 
 ---
 
@@ -286,7 +234,7 @@ python scripts/generate_plots.py --all
 After running experiments, check the metrics summary:
 
 ```bash
-python scripts/extract_metrics.py --all --output results/metrics_summary.csv
+python scripts/extras/extract_metrics.py --all --output results/metrics_summary.csv
 ```
 
 **Key Metrics:**
