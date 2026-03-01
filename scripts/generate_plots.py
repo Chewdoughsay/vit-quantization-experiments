@@ -1,48 +1,7 @@
 """
-Generate publication-quality plots from training metrics.
+Generate publication-quality training curve and comparison plots from experiment metrics.
 
-This script creates visualizations of ViT training experiments including:
-- Training/validation loss curves
-- Training/validation accuracy curves
-- Learning rate schedules
-- Multi-experiment comparisons
-- Hardware monitoring plots (CPU, memory, GPU)
-- Convergence analysis
-
-All plots are saved as high-resolution PNG files suitable for papers,
-presentations, and reports. The script uses matplotlib with a clean,
-professional style optimized for scientific publications.
-
-Usage:
-    Plot single experiment:
-        $ python scripts/generate_plots.py --experiment results/BaseFP32
-
-    Compare multiple experiments:
-        $ python scripts/generate_plots.py --compare results/BaseFP32 results/BaseFP16 results/AugmFP16
-
-    Plot all experiments:
-        $ python scripts/generate_plots.py --all
-
-    Custom output directory:
-        $ python scripts/generate_plots.py --experiment results/BaseFP32 --output plots/
-
-Output:
-    For single experiment, generates:
-    - {experiment}/plots/training_curves.png: Loss and accuracy over epochs
-    - {experiment}/plots/learning_rate.png: LR schedule
-    - {experiment}/plots/hardware_stats.png: CPU, memory, thermal (if available)
-
-    For comparisons, generates:
-    - results/comparison_plots/accuracy_comparison.png
-    - results/comparison_plots/loss_comparison.png
-
-Example:
-    >>> from generate_plots import plot_training_curves, load_metrics
-    >>>
-    >>> # Load and plot single experiment
-    >>> metrics = load_metrics('results/BaseFP32/metrics/final_metrics.json')
-    >>> plot_training_curves(metrics, 'BaseFP32', save_dir='plots/')
-    ✓ Saved: plots/BaseFP32_training_curves.png
+Usage: python scripts/generate_plots.py [--experiment DIR | --compare DIR... | --all] [--output DIR]
 """
 
 import json
@@ -52,7 +11,6 @@ from pathlib import Path
 from typing import List, Dict, Optional
 import numpy as np
 
-# Import matplotlib with non-interactive backend for server use
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
@@ -79,22 +37,7 @@ plt.rcParams.update({
 
 
 def load_metrics(metrics_path):
-    """
-    Load training metrics from JSON file.
-
-    Args:
-        metrics_path (str or Path): Path to final_metrics.json
-
-    Returns:
-        dict: Metrics dictionary with time-series data
-
-    Raises:
-        FileNotFoundError: If metrics file doesn't exist
-
-    Example:
-        >>> metrics = load_metrics('results/BaseFP32/metrics/final_metrics.json')
-        >>> print(f"Epochs: {len(metrics['train_loss'])}")
-    """
+    """Load and return metrics dict from a JSON file."""
     metrics_path = Path(metrics_path)
 
     if not metrics_path.exists():
@@ -107,20 +50,7 @@ def load_metrics(metrics_path):
 
 
 def load_hardware_stats(stats_path):
-    """
-    Load hardware monitoring statistics from JSON file.
-
-    Args:
-        stats_path (str or Path): Path to hardware_stats.json
-
-    Returns:
-        dict: Hardware stats dictionary, or None if file doesn't exist
-
-    Example:
-        >>> hw_stats = load_hardware_stats('results/BaseFP32/metrics/hardware_stats.json')
-        >>> if hw_stats:
-        ...     print(f"Max CPU: {hw_stats['summary']['max_cpu']:.1f}%")
-    """
+    """Load hardware stats JSON; returns None if file missing or invalid."""
     stats_path = Path(stats_path)
 
     if not stats_path.exists():
@@ -135,51 +65,20 @@ def load_hardware_stats(stats_path):
 
 
 def plot_training_curves(metrics, experiment_name, save_dir):
-    """
-    Plot training and validation loss/accuracy curves.
-
-    Creates a 2x1 subplot figure showing:
-    - Top: Training and validation loss over epochs
-    - Bottom: Training and validation accuracy over epochs
-
-    Args:
-        metrics (dict): Metrics dictionary from load_metrics()
-        experiment_name (str): Name for plot title (e.g., 'BaseFP32')
-        save_dir (str or Path): Directory to save the plot
-
-    Returns:
-        Path: Path to saved plot file
-
-    Example Output:
-        Figure with two subplots:
-        - Loss curves showing convergence and potential overfitting
-        - Accuracy curves showing training progress
-        - Vertical line at best validation accuracy epoch
-        - Grid for easy value reading
-        - Legend identifying train/val curves
-
-    Example:
-        >>> metrics = load_metrics('results/BaseFP32/metrics/final_metrics.json')
-        >>> plot_training_curves(metrics, 'BaseFP32', 'results/BaseFP32/plots')
-        PosixPath('results/BaseFP32/plots/training_curves.png')
-    """
+    """Plot loss and accuracy curves; returns path to saved PNG."""
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Extract data
     epochs = range(1, len(metrics['train_loss']) + 1)
     train_loss = metrics['train_loss']
     val_loss = metrics['val_loss']
     train_acc = metrics['train_acc']
     val_acc = metrics['val_acc']
 
-    # Find best validation accuracy epoch
     best_epoch = val_acc.index(max(val_acc)) + 1
 
-    # Create figure with 2 subplots
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
 
-    # Plot 1: Loss curves
     ax1.plot(epochs, train_loss, label='Training Loss', color='#1f77b4', linewidth=2)
     ax1.plot(epochs, val_loss, label='Validation Loss', color='#ff7f0e', linewidth=2)
     ax1.axvline(x=best_epoch, color='green', linestyle='--', alpha=0.5, label=f'Best Val Acc (epoch {best_epoch})')
@@ -189,7 +88,6 @@ def plot_training_curves(metrics, experiment_name, save_dir):
     ax1.legend(loc='best')
     ax1.grid(True, alpha=0.3)
 
-    # Plot 2: Accuracy curves
     ax2.plot(epochs, train_acc, label='Training Accuracy', color='#1f77b4', linewidth=2)
     ax2.plot(epochs, val_acc, label='Validation Accuracy', color='#ff7f0e', linewidth=2)
     ax2.axvline(x=best_epoch, color='green', linestyle='--', alpha=0.5, label=f'Best Val Acc (epoch {best_epoch})')
@@ -199,12 +97,10 @@ def plot_training_curves(metrics, experiment_name, save_dir):
     ax2.legend(loc='best')
     ax2.grid(True, alpha=0.3)
 
-    # Set y-axis limits for accuracy (0 to 1)
     ax2.set_ylim(0, 1.05)
 
     plt.tight_layout()
 
-    # Save figure
     output_path = save_dir / f'{experiment_name}_training_curves.png'
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
@@ -213,25 +109,7 @@ def plot_training_curves(metrics, experiment_name, save_dir):
 
 
 def plot_learning_rate(metrics, experiment_name, save_dir):
-    """
-    Plot learning rate schedule over training.
-
-    Creates a line plot showing how the learning rate changed during training
-    (typically showing cosine annealing or warmup schedules).
-
-    Args:
-        metrics (dict): Metrics dictionary from load_metrics()
-        experiment_name (str): Name for plot title
-        save_dir (str or Path): Directory to save the plot
-
-    Returns:
-        Path: Path to saved plot file
-
-    Example:
-        >>> metrics = load_metrics('results/BaseFP32/metrics/final_metrics.json')
-        >>> plot_learning_rate(metrics, 'BaseFP32', 'results/BaseFP32/plots')
-        PosixPath('results/BaseFP32/plots/learning_rate.png')
-    """
+    """Plot LR schedule over training; returns path to saved PNG or None."""
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -248,7 +126,7 @@ def plot_learning_rate(metrics, experiment_name, save_dir):
     ax.set_ylabel('Learning Rate')
     ax.set_title(f'{experiment_name} - Learning Rate Schedule')
     ax.grid(True, alpha=0.3)
-    ax.set_yscale('log')  # Log scale for better visibility
+    ax.set_yscale('log')
 
     plt.tight_layout()
 
@@ -260,34 +138,13 @@ def plot_learning_rate(metrics, experiment_name, save_dir):
 
 
 def plot_hardware_stats(hw_stats, experiment_name, save_dir):
-    """
-    Plot hardware monitoring statistics (CPU, memory, thermal).
-
-    Creates a multi-panel plot showing:
-    - CPU utilization over time
-    - Memory usage over time
-    - Thermal throttling levels (if available)
-
-    Args:
-        hw_stats (dict): Hardware stats from load_hardware_stats()
-        experiment_name (str): Name for plot title
-        save_dir (str or Path): Directory to save the plot
-
-    Returns:
-        Path: Path to saved plot file, or None if no data available
-
-    Example:
-        >>> hw_stats = load_hardware_stats('results/BaseFP32/metrics/hardware_stats.json')
-        >>> if hw_stats:
-        ...     plot_hardware_stats(hw_stats, 'BaseFP32', 'results/BaseFP32/plots')
-    """
+    """Plot CPU, memory, and thermal time-series; returns path to saved PNG or None."""
     if hw_stats is None:
         return None
 
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Extract full stats (time series)
     full_stats = hw_stats.get('full_stats', {})
 
     if not full_stats.get('timestamps'):
@@ -299,7 +156,6 @@ def plot_hardware_stats(hw_stats, experiment_name, save_dir):
     mem_percent = full_stats['memory_percent']
     thermal = full_stats.get('thermal_pressure', [])
 
-    # Create figure with 2 or 3 subplots depending on thermal data
     n_plots = 3 if thermal and any(thermal) else 2
     fig, axes = plt.subplots(n_plots, 1, figsize=(10, 3*n_plots))
 
@@ -308,7 +164,6 @@ def plot_hardware_stats(hw_stats, experiment_name, save_dir):
     else:
         ax1, ax2, ax3 = axes
 
-    # Plot 1: CPU usage
     ax1.plot(timestamps, cpu_percent, color='#d62728', linewidth=1.5)
     ax1.set_xlabel('Time (minutes)')
     ax1.set_ylabel('CPU Usage (%)')
@@ -316,12 +171,10 @@ def plot_hardware_stats(hw_stats, experiment_name, save_dir):
     ax1.grid(True, alpha=0.3)
     ax1.set_ylim(0, 100)
 
-    # Add mean line
     mean_cpu = np.mean(cpu_percent)
     ax1.axhline(y=mean_cpu, color='gray', linestyle='--', alpha=0.5, label=f'Mean: {mean_cpu:.1f}%')
     ax1.legend(loc='best')
 
-    # Plot 2: Memory usage
     ax2.plot(timestamps, mem_percent, color='#9467bd', linewidth=1.5)
     ax2.set_xlabel('Time (minutes)')
     ax2.set_ylabel('Memory Usage (%)')
@@ -329,12 +182,10 @@ def plot_hardware_stats(hw_stats, experiment_name, save_dir):
     ax2.grid(True, alpha=0.3)
     ax2.set_ylim(0, 100)
 
-    # Add mean line
     mean_mem = np.mean(mem_percent)
     ax2.axhline(y=mean_mem, color='gray', linestyle='--', alpha=0.5, label=f'Mean: {mean_mem:.1f}%')
     ax2.legend(loc='best')
 
-    # Plot 3: Thermal pressure (if available)
     if n_plots == 3:
         ax3.plot(timestamps, thermal, color='#ff7f0e', linewidth=1.5)
         ax3.set_xlabel('Time (minutes)')
@@ -357,29 +208,10 @@ def plot_hardware_stats(hw_stats, experiment_name, save_dir):
 
 
 def plot_comparison(experiments_data, metric_name, save_dir):
-    """
-    Plot comparison of a specific metric across multiple experiments.
-
-    Creates a line plot comparing the same metric (e.g., validation accuracy)
-    across different experiments on the same axes.
-
-    Args:
-        experiments_data (list): List of dicts with 'name' and 'metrics' keys
-        metric_name (str): Metric to plot (e.g., 'val_acc', 'train_loss')
-        save_dir (str or Path): Directory to save the plot
-
-    Returns:
-        Path: Path to saved plot file
-
-    Example:
-        >>> exp1 = {'name': 'BaseFP32', 'metrics': load_metrics('results/BaseFP32/...')}
-        >>> exp2 = {'name': 'BaseFP16', 'metrics': load_metrics('results/BaseFP16/...')}
-        >>> plot_comparison([exp1, exp2], 'val_acc', 'results/comparison_plots')
-    """
+    """Plot a single metric across multiple experiments on the same axes; returns path to saved PNG."""
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Map metric names to display names
     metric_labels = {
         'val_acc': 'Validation Accuracy',
         'train_acc': 'Training Accuracy',
@@ -391,7 +223,6 @@ def plot_comparison(experiments_data, metric_name, save_dir):
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Plot each experiment
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
 
     for i, exp_data in enumerate(experiments_data):
@@ -413,13 +244,11 @@ def plot_comparison(experiments_data, metric_name, save_dir):
     ax.legend(loc='best')
     ax.grid(True, alpha=0.3)
 
-    # Set y-axis limits for accuracy metrics
     if 'acc' in metric_name:
         ax.set_ylim(0, 1.05)
 
     plt.tight_layout()
 
-    # Save figure
     output_path = save_dir / f'comparison_{metric_name}.png'
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
@@ -428,28 +257,6 @@ def plot_comparison(experiments_data, metric_name, save_dir):
 
 
 def main():
-    """
-    Main execution function for plot generation script.
-
-    Parses command-line arguments and generates appropriate plots
-    for single experiments or multi-experiment comparisons.
-
-    Command-line Arguments:
-        --experiment: Path to single experiment directory
-        --compare: List of experiment directories to compare
-        --all: Plot all experiments in results/ directory
-        --output: Custom output directory for plots
-
-    Examples:
-        # Plot single experiment
-        $ python scripts/generate_plots.py --experiment results/BaseFP32
-
-        # Compare multiple experiments
-        $ python scripts/generate_plots.py --compare results/BaseFP32 results/BaseFP16
-
-        # Plot all experiments
-        $ python scripts/generate_plots.py --all
-    """
     parser = argparse.ArgumentParser(
         description='Generate plots from training metrics',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -492,14 +299,12 @@ Examples:
 
     args = parser.parse_args()
 
-    # Single experiment mode
     if args.experiment:
         exp_path = Path(args.experiment)
         exp_name = exp_path.name
         metrics_file = exp_path / 'metrics' / 'final_metrics.json'
         hw_stats_file = exp_path / 'metrics' / 'hardware_stats.json'
 
-        # Determine output directory
         if args.output:
             output_dir = Path(args.output)
         else:
@@ -509,21 +314,17 @@ Examples:
             print(f"Generating plots for: {exp_name}")
             print(f"Output directory: {output_dir}\n")
 
-            # Load metrics
             metrics = load_metrics(metrics_file)
 
-            # Plot training curves
             print("  Creating training curves...")
             curves_path = plot_training_curves(metrics, exp_name, output_dir)
             print(f"  ✓ Saved: {curves_path}")
 
-            # Plot learning rate
             print("  Creating learning rate plot...")
             lr_path = plot_learning_rate(metrics, exp_name, output_dir)
             if lr_path:
                 print(f"  ✓ Saved: {lr_path}")
 
-            # Plot hardware stats if available
             hw_stats = load_hardware_stats(hw_stats_file)
             if hw_stats:
                 print("  Creating hardware stats plots...")
@@ -537,7 +338,6 @@ Examples:
             print(f"Error: {e}")
             sys.exit(1)
 
-    # Comparison mode
     elif args.compare or args.all:
         if args.all:
             # Discover all experiments
@@ -551,7 +351,6 @@ Examples:
             print("No experiments found")
             sys.exit(1)
 
-        # Determine output directory
         if args.output:
             output_dir = Path(args.output)
         else:
@@ -559,7 +358,6 @@ Examples:
 
         print(f"Output directory: {output_dir}\n")
 
-        # Load all metrics
         experiments_data = []
         for exp_path in exp_paths:
             metrics_file = exp_path / 'metrics' / 'final_metrics.json'
@@ -573,7 +371,6 @@ Examples:
             print("No valid experiments to compare")
             sys.exit(1)
 
-        # Generate comparison plots
         print(f"Comparing {len(experiments_data)} experiments...\n")
 
         metrics_to_plot = ['val_acc', 'train_acc', 'val_loss', 'train_loss']

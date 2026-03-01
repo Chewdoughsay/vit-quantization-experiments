@@ -1,29 +1,7 @@
 """
-Generate Hardware Monitoring Plots from Training Data.
+Hardware monitoring plots (CPU, memory, thermal, power) from training experiment data.
 
-This script creates comprehensive visualizations of hardware utilization during training:
-- CPU usage over time
-- Memory usage over time
-- Thermal throttling levels
-- GPU and CPU power consumption (if available from powermetrics)
-- Total power consumption
-
-Usage:
-    Plot single experiment:
-        $ python scripts/plot_hardware_stats.py --experiment results/BaseFP32
-
-    Plot all experiments:
-        $ python scripts/plot_hardware_stats.py --all
-
-    Plot specific experiments:
-        $ python scripts/plot_hardware_stats.py --experiments results/BaseFP32 results/AugmFP16
-
-Output:
-    - {experiment}/plots/hardware_monitoring.png - System monitoring (CPU, memory, thermal)
-    - {experiment}/plots/power_consumption.png - Power usage (GPU + CPU from powermetrics, if available)
-
-Note: Power consumption plots require gpu_stats.csv which is only generated when
-      training is run with sudo access for powermetrics.
+Usage: python scripts/plot_hardware_stats.py [--experiment DIR | --experiments DIR... | --all]
 """
 
 import json
@@ -33,12 +11,10 @@ import sys
 from pathlib import Path
 import numpy as np
 
-# Import matplotlib with non-interactive backend
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-# Set publication-quality style
 plt.style.use('seaborn-v0_8-darkgrid')
 plt.rcParams.update({
     'font.size': 10,
@@ -94,21 +70,10 @@ def load_gpu_stats(gpu_path):
 
 
 def plot_system_monitoring(hw_stats, experiment_name, save_dir):
-    """
-    Plot system monitoring data (CPU, memory, thermal).
-
-    Args:
-        hw_stats (dict): Hardware stats with cpu_percent, memory_percent, thermal_pressure, timestamps
-        experiment_name (str): Name of experiment
-        save_dir (Path): Directory to save plot
-
-    Returns:
-        Path: Path to saved plot, or None if no data
-    """
+    """Plot CPU, memory, and thermal time-series; returns path to saved PNG or None."""
     if hw_stats is None:
         return None
 
-    # Check if we have the expected keys
     required_keys = ['cpu_percent', 'memory_percent', 'timestamps']
     if not all(key in hw_stats for key in required_keys):
         print(f"  ⚠️  Missing required data in hardware_stats.json for {experiment_name}")
@@ -119,11 +84,9 @@ def plot_system_monitoring(hw_stats, experiment_name, save_dir):
     mem_percent = hw_stats['memory_percent']
     thermal = hw_stats.get('thermal_pressure', [])
 
-    # Create figure with subplots
     fig, axes = plt.subplots(3, 1, figsize=(12, 10))
     fig.suptitle(f'{experiment_name} - System Monitoring', fontsize=14, fontweight='bold')
 
-    # CPU Usage
     ax1 = axes[0]
     ax1.plot(timestamps, cpu_percent, color='#2E86AB', linewidth=1.5, alpha=0.8)
     ax1.fill_between(timestamps, cpu_percent, alpha=0.3, color='#2E86AB')
@@ -132,7 +95,6 @@ def plot_system_monitoring(hw_stats, experiment_name, save_dir):
     ax1.grid(True, alpha=0.3)
     ax1.set_ylim(0, max(100, max(cpu_percent) * 1.1))
 
-    # Add statistics
     avg_cpu = np.mean(cpu_percent)
     max_cpu = np.max(cpu_percent)
     ax1.axhline(y=avg_cpu, color='red', linestyle='--', alpha=0.6,
@@ -141,7 +103,6 @@ def plot_system_monitoring(hw_stats, experiment_name, save_dir):
     ax1.text(0.02, 0.98, f'Max: {max_cpu:.1f}%', transform=ax1.transAxes,
              verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
-    # Memory Usage
     ax2 = axes[1]
     ax2.plot(timestamps, mem_percent, color='#A23B72', linewidth=1.5, alpha=0.8)
     ax2.fill_between(timestamps, mem_percent, alpha=0.3, color='#A23B72')
@@ -150,7 +111,6 @@ def plot_system_monitoring(hw_stats, experiment_name, save_dir):
     ax2.grid(True, alpha=0.3)
     ax2.set_ylim(0, 100)
 
-    # Add statistics
     avg_mem = np.mean(mem_percent)
     max_mem = np.max(mem_percent)
     ax2.axhline(y=avg_mem, color='red', linestyle='--', alpha=0.6,
@@ -159,7 +119,6 @@ def plot_system_monitoring(hw_stats, experiment_name, save_dir):
     ax2.text(0.02, 0.98, f'Max: {max_mem:.1f}%', transform=ax2.transAxes,
              verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
-    # Thermal Throttling
     ax3 = axes[2]
     if thermal and any(t > 0 for t in thermal):
         ax3.plot(timestamps, thermal, color='#F18F01', linewidth=1.5, alpha=0.8)
@@ -187,33 +146,19 @@ def plot_system_monitoring(hw_stats, experiment_name, save_dir):
 
 
 def plot_power_consumption(gpu_stats, experiment_name, save_dir):
-    """
-    Plot power consumption data (GPU and CPU power from powermetrics).
-
-    Args:
-        gpu_stats (dict): GPU stats with timestamp, gpu_util, gpu_power, cpu_power
-        experiment_name (str): Name of experiment
-        save_dir (Path): Directory to save plot
-
-    Returns:
-        Path: Path to saved plot, or None if no data
-    """
+    """Plot GPU and CPU power consumption from powermetrics data; returns path to saved PNG or None."""
     if gpu_stats is None:
         return None
 
     n_samples = len(gpu_stats['gpu_power'])
     time_minutes = np.arange(n_samples) / 60  # Assuming 1 sample per second
-
-    # Convert mW to W
     gpu_power_w = np.array(gpu_stats['gpu_power']) / 1000
     cpu_power_w = np.array(gpu_stats['cpu_power']) / 1000
     total_power_w = gpu_power_w + cpu_power_w
 
-    # Create figure with subplots
     fig, axes = plt.subplots(2, 1, figsize=(12, 9))
     fig.suptitle(f'{experiment_name} - Power Consumption (Apple Silicon)', fontsize=14, fontweight='bold')
 
-    # Individual Power Components
     ax1 = axes[0]
     ax1.plot(time_minutes, gpu_power_w, color='#D62828', linewidth=1.5, alpha=0.8, label='GPU Power')
     ax1.plot(time_minutes, cpu_power_w, color='#2E86AB', linewidth=1.5, alpha=0.8, label='CPU Power')
@@ -224,14 +169,12 @@ def plot_power_consumption(gpu_stats, experiment_name, save_dir):
     ax1.grid(True, alpha=0.3)
     ax1.legend(loc='upper right')
 
-    # Add statistics
     avg_gpu_power = np.mean(gpu_power_w)
     avg_cpu_power = np.mean(cpu_power_w)
     ax1.text(0.02, 0.98, f'GPU Avg: {avg_gpu_power:.1f}W | CPU Avg: {avg_cpu_power:.1f}W',
              transform=ax1.transAxes, verticalalignment='top',
              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
-    # Total Power Consumption
     ax2 = axes[1]
     ax2.plot(time_minutes, total_power_w, color='#6A4C93', linewidth=2, alpha=0.8)
     ax2.fill_between(time_minutes, total_power_w, alpha=0.3, color='#6A4C93')
@@ -239,7 +182,6 @@ def plot_power_consumption(gpu_stats, experiment_name, save_dir):
     ax2.set_xlabel('Time (minutes)')
     ax2.grid(True, alpha=0.3)
 
-    # Add statistics
     avg_total = np.mean(total_power_w)
     max_total = np.max(total_power_w)
     ax2.axhline(y=avg_total, color='red', linestyle='--', alpha=0.6,
@@ -272,7 +214,6 @@ def plot_experiment(exp_path):
 
     plots_generated = 0
 
-    # System monitoring plots
     print("  Loading system monitoring data...")
     hw_stats = load_hardware_stats(hardware_file)
     if hw_stats:
@@ -284,7 +225,6 @@ def plot_experiment(exp_path):
     else:
         print("  ⚠️  No hardware_stats.json found")
 
-    # Power consumption plots
     print("  Loading power consumption data...")
     gpu_stats = load_gpu_stats(gpu_file)
     if gpu_stats:
@@ -305,7 +245,6 @@ def plot_experiment(exp_path):
 
 
 def main():
-    """Main execution function."""
     parser = argparse.ArgumentParser(
         description='Generate hardware monitoring plots',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -328,7 +267,6 @@ Examples:
 
     args = parser.parse_args()
 
-    # Collect experiments to plot
     experiments = []
 
     if args.experiment:
@@ -338,7 +276,6 @@ Examples:
     elif args.all:
         results_dir = Path('results')
         if results_dir.exists():
-            # Find all experiment directories (those with metrics folder)
             for exp_dir in results_dir.iterdir():
                 if exp_dir.is_dir() and (exp_dir / 'metrics').exists():
                     experiments.append(str(exp_dir))
@@ -353,7 +290,6 @@ Examples:
         parser.print_help()
         sys.exit(1)
 
-    # Plot each experiment
     total_plots = 0
     for exp in experiments:
         plots_count = plot_experiment(exp)

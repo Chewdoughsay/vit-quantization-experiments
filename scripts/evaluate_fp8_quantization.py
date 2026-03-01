@@ -1,32 +1,14 @@
 """
-FP8 Post-Training Quantization Evaluation Script.
+FP8 E4M3FN post-training quantization evaluation (per-tensor and per-channel).
 
-This script evaluates FP8 post-training quantization on a trained FP16 model:
-1. Load best FP16 model (from AugmFP16 experiment)
-2. Evaluate original FP16 accuracy
-3. Quantize to FP8 (E4M3 format)
-4. Restore to FP16
-5. Evaluate quantized accuracy
-6. Measure accuracy degradation
-
-This is NOT a training script - it's a conversion and evaluation test.
-
-Usage:
-    $ python scripts/evaluate_fp8_quantization.py
-
-Requirements:
-    - AugmFP16 experiment must be completed first
-    - Best model checkpoint: results/AugmFP16/checkpoints/best_model.pt
-
-Expected Results:
-    - Accuracy Loss: ~2-3% (acceptable for deployment)
-    - Demonstrates FP8 viability for inference
+Compares both granularities against the FP16 baseline. Requires AugmFP16 checkpoint.
+Usage: python scripts/evaluate_fp8_quantization.py
 """
 
 import sys
 import json
 import torch
-import numpy as np
+import torch.nn.functional as F
 from pathlib import Path
 from datetime import datetime
 
@@ -36,86 +18,103 @@ sys.path.insert(0, str(project_root))
 
 from src.models.vit_model import create_vit_model
 from src.data.dataset import get_cifar10_loaders
-from src.utils.metrics import calculate_accuracy
 from tqdm import tqdm
 
 
-def quantize_to_fp8(tensor, e4m3_range=(-240, 240)):
-    """
-    Quantize tensor to FP8 E4M3 format and back to FP16.
+# ---------------------------------------------------------------------------
+# Quantization functions
+# ---------------------------------------------------------------------------
 
-    E4M3 format: 1 sign bit, 4 exponent bits, 3 mantissa bits
-
-    Args:
-        tensor (torch.Tensor): Input tensor (FP16 or FP32)
-        e4m3_range (tuple): Min/max values for E4M3 format
-
-    Returns:
-        torch.Tensor: Quantized tensor (back in FP16)
-
-    Note:
-        IMPORTANT: Use actual weight range, not theoretical max!
-        Using theoretical max (±240) will zero out all weights.
-        Should use actual data range (e.g., ±0.64).
-    """
-    # Get actual data range (critical for proper quantization!)
-    actual_min = tensor.min().item()
-    actual_max = tensor.max().item()
-
-    # Use actual range instead of theoretical range
-    # This prevents zeroing out weights
-    scale = max(abs(actual_min), abs(actual_max))
-
-    # Quantize: scale to FP8 range, round, then scale back
-    # Simulate FP8 precision loss
-    fp8_scale = 240.0 / scale if scale > 0 else 1.0
-
-    quantized = tensor * fp8_scale
-    quantized = torch.clamp(quantized, -240, 240)
-    quantized = torch.round(quantized)  # Simulate discrete FP8 values
-    quantized = quantized / fp8_scale
-
-    return quantized
+FP8_MAX = torch.finfo(torch.float8_e4m3fn).max  # 448.0 for E4M3FN
 
 
-def quantize_model_to_fp8(model):
-    """
-    Quantize all model weights to FP8 E4M3 and back to FP16.
+def quantize_weight_per_tensor(tensor: torch.Tensor) -> torch.Tensor:
+    """Quantize tensor to FP8 E4M3FN using a single global scale factor."""
+    abs_max = tensor.abs().max().clamp(min=1e-12)
+    scale = FP8_MAX / abs_max
+    # FP8 cast must happen on CPU (MPS does not support float8_e4m3fn)
+    cpu = tensor.cpu()
+    quantized = (cpu * scale.cpu()).clamp(-FP8_MAX, FP8_MAX)
+    quantized = quantized.to(torch.float8_e4m3fn).to(cpu.dtype)
+    return (quantized / scale.cpu()).to(tensor.device)
 
-    Args:
-        model (torch.nn.Module): Model to quantize
 
-    Returns:
-        torch.nn.Module: Quantized model
+def quantize_weight_per_channel(tensor: torch.Tensor) -> torch.Tensor:
+    """Quantize tensor to FP8 E4M3FN with one scale per output channel (dim 0); 1-D tensors fall back to per-tensor."""
+    if tensor.ndim == 1:
+        return quantize_weight_per_tensor(tensor)
 
-    Note:
-        This is POST-TRAINING quantization (no retraining).
-        Simulates FP8 deployment on specialized hardware.
-    """
-    print("Quantizing model to FP8...")
+    reduce_dims = list(range(1, tensor.ndim))
+    channel_maxes = tensor.abs().amax(dim=reduce_dims, keepdim=True).clamp(min=1e-12)
+    scale = FP8_MAX / channel_maxes
+
+    # FP8 cast must happen on CPU (MPS does not support float8_e4m3fn)
+    cpu = tensor.cpu()
+    scale_cpu = scale.cpu()
+    quantized = (cpu * scale_cpu).clamp(-FP8_MAX, FP8_MAX)
+    quantized = quantized.to(torch.float8_e4m3fn).to(cpu.dtype)
+    return (quantized / scale_cpu).to(tensor.device)
+
+
+# ---------------------------------------------------------------------------
+# Model-level quantization
+# ---------------------------------------------------------------------------
+
+def quantize_model(model: torch.nn.Module, granularity: str) -> torch.nn.Module:
+    """Quantize all trainable parameters in-place with the given granularity."""
+    fn = quantize_weight_per_tensor if granularity == "per_tensor" else quantize_weight_per_channel
 
     with torch.no_grad():
         for name, param in model.named_parameters():
-            if param.requires_grad:  # Only quantize trainable weights
-                param.data = quantize_to_fp8(param.data)
+            if param.requires_grad:
+                param.data = fn(param.data)
 
-    print("Model quantized to FP8 (E4M3)")
     return model
 
 
+# ---------------------------------------------------------------------------
+# Per-layer error analysis
+# ---------------------------------------------------------------------------
+
+def compute_layer_errors(
+    original_params: dict[str, torch.Tensor],
+    quantized_model: torch.nn.Module,
+) -> dict[str, dict]:
+    """Return per-layer MSE, max_abs_error, relative_error, and shape between original and quantized weights."""
+    layer_errors = {}
+    for name, param in quantized_model.named_parameters():
+        if name not in original_params:
+            continue
+        orig = original_params[name]
+        quant = param.data
+
+        mse = F.mse_loss(quant, orig).item()
+        max_abs = (quant - orig).abs().max().item()
+        orig_power = orig.pow(2).mean().item()
+        relative = mse / max(orig_power, 1e-12)
+
+        layer_errors[name] = {
+            "mse": mse,
+            "max_abs_error": max_abs,
+            "relative_error": relative,
+            "shape": list(orig.shape),
+        }
+
+    return layer_errors
+
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+
 @torch.no_grad()
-def evaluate_model(model, test_loader, device):
-    """
-    Evaluate model accuracy and loss on test set.
-
-    Args:
-        model (torch.nn.Module): Model to evaluate
-        test_loader (DataLoader): Test data loader
-        device (str): Device to use
-
-    Returns:
-        tuple: (accuracy, loss)
-    """
+def evaluate_model(
+    model: torch.nn.Module,
+    test_loader,
+    device: torch.device,
+    desc: str = "Evaluation",
+) -> tuple[float, float]:
+    """Return (accuracy, avg_loss) on test_loader."""
     model.eval()
     criterion = torch.nn.CrossEntropyLoss()
 
@@ -123,178 +122,185 @@ def evaluate_model(model, test_loader, device):
     total_correct = 0
     total_samples = 0
 
-    print("Evaluating model...")
-    for images, labels in tqdm(test_loader, desc='Evaluation'):
+    for images, labels in tqdm(test_loader, desc=desc):
         images = images.to(device)
         labels = labels.to(device)
-
         outputs = model(images)
-        loss = criterion(outputs, labels)
 
-        total_loss += loss.item()
-
-        _, predicted = torch.max(outputs, 1)
-        total_correct += (predicted == labels).sum().item()
+        total_loss += criterion(outputs, labels).item()
+        total_correct += (outputs.argmax(dim=1) == labels).sum().item()
         total_samples += labels.size(0)
 
-    accuracy = total_correct / total_samples
-    avg_loss = total_loss / len(test_loader)
+    return total_correct / total_samples, total_loss / len(test_loader)
 
-    return accuracy, avg_loss
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
-    """
-    Main execution for FP8 quantization testing.
+    print("\n" + "=" * 70)
+    print("FP8 Post-Training Quantization Evaluation")
+    print(f"Using native torch.float8_e4m3fn  (max = {FP8_MAX})")
+    print("=" * 70 + "\n")
 
-    Workflow:
-        1. Load trained FP16 model
-        2. Evaluate original accuracy
-        3. Quantize to FP8
-        4. Evaluate quantized accuracy
-        5. Report accuracy degradation
-        6. Save results
-    """
-    print("\n" + "="*70)
-    print("FP8 Post-Training Quantization Test")
-    print("="*70 + "\n")
-
+    # ------------------------------------------------------------------
     # Configuration
+    # ------------------------------------------------------------------
     CONFIG = {
-        'name': 'FP8Test',
-        'source_model': 'results/AugmFP16/checkpoints/best_model.pt',
-        'model_name': 'vit_tiny_patch16_224',
-        'num_classes': 10,
-        'batch_size': 128,
-        'device': 'mps'
+        "name": "FP8Test",
+        "source_model": "results/AugmFP16/checkpoints/best_model.pt",
+        "model_name": "vit_tiny_patch16_224",
+        "num_classes": 10,
+        "batch_size": 128,
+        "device": "mps",
     }
 
     print("Configuration:")
-    print(f"  Source Model: {CONFIG['source_model']}")
-    print(f"  Model: {CONFIG['model_name']}")
-    print(f"  Device: {CONFIG['device']}")
+    for k, v in CONFIG.items():
+        print(f"  {k}: {v}")
     print()
 
-    # Check if source model exists
-    source_path = Path(CONFIG['source_model'])
+    source_path = Path(CONFIG["source_model"])
     if not source_path.exists():
-        print(f"Error: Source model not found!")
-        print(f"   Expected: {source_path}")
-        print(f"\n   Please run AugmFP16 experiment first:")
-        print(f"   $ python scripts/train_AugmFP16.py")
+        print(f"Error: checkpoint not found at {source_path}")
+        print("Please run the AugmFP16 experiment first:")
+        print("  $ python scripts/train.py --config configs/AugmFP16.yaml")
         sys.exit(1)
 
-    # Create model
-    print("Creating model...")
-    device = torch.device(CONFIG['device'])
+    device = torch.device(CONFIG["device"])
+
     model = create_vit_model(
-        model_name=CONFIG['model_name'],
-        num_classes=CONFIG['num_classes'],
-        pretrained=False
+        model_name=CONFIG["model_name"],
+        num_classes=CONFIG["num_classes"],
+        pretrained=False,
     )
 
-    # Load trained weights
-    print(f"Loading trained weights from: {source_path}")
     checkpoint = torch.load(source_path, map_location=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model.load_state_dict(checkpoint["model_state_dict"])
     model = model.to(device)
-    print(f"Model loaded (original val_acc: {checkpoint['val_acc']:.4f})")
-    print()
+    print(f"Loaded checkpoint  (saved val_acc: {checkpoint['val_acc']:.4f})\n")
 
-    # Load test data
-    print("Loading CIFAR-10 test set...")
     _, test_loader = get_cifar10_loaders(
-        batch_size=CONFIG['batch_size'],
+        batch_size=CONFIG["batch_size"],
         num_workers=2,
-        augmentation='extended',  # Same as training
-        data_dir='./data'
+        augmentation="extended",
+        data_dir="./data",
     )
-    print(f"✓ Test loader ready: {len(test_loader)} batches\n")
+    print(f"Test loader: {len(test_loader)} batches\n")
 
-    # Evaluate original FP16 model
-    print("="*70)
-    print("STEP 1: Evaluate Original FP16 Model")
-    print("="*70)
-    original_acc, original_loss = evaluate_model(model, test_loader, device)
-    print(f"\n✓ Original FP16 Model:")
-    print(f"   Accuracy: {original_acc:.4f} ({original_acc*100:.2f}%)")
-    print(f"   Loss: {original_loss:.4f}\n")
-
-    # Quantize to FP8
-    print("="*70)
-    print("STEP 2: Quantize to FP8 (E4M3)")
-    print("="*70)
-    model = quantize_model_to_fp8(model)
-    print()
-
-    # Evaluate quantized model
-    print("="*70)
-    print("STEP 3: Evaluate Quantized FP8 Model")
-    print("="*70)
-    quantized_acc, quantized_loss = evaluate_model(model, test_loader, device)
-    print(f"\n✓ Quantized FP8 Model:")
-    print(f"   Accuracy: {quantized_acc:.4f} ({quantized_acc*100:.2f}%)")
-    print(f"   Loss: {quantized_loss:.4f}\n")
-
-    # Calculate degradation
-    acc_loss = original_acc - quantized_acc
-    acc_loss_percent = acc_loss * 100
-    loss_increase = quantized_loss - original_loss
-
-    # Save results
-    results = {
-        'experiment': 'FP8Test',
-        'source_model': str(source_path),
-        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'original_fp16': {
-            'accuracy': float(original_acc),
-            'loss': float(original_loss)
-        },
-        'quantized_fp8': {
-            'accuracy': float(quantized_acc),
-            'loss': float(quantized_loss)
-        },
-        'degradation': {
-            'accuracy_loss': float(acc_loss),
-            'accuracy_loss_percent': float(acc_loss_percent),
-            'loss_increase': float(loss_increase)
-        }
+    original_params = {
+        name: param.data.clone()
+        for name, param in model.named_parameters()
+        if param.requires_grad
     }
 
-    # Save results
-    output_dir = Path('results/FP8Test/metrics')
-    output_dir.mkdir(parents=True, exist_ok=True)
+    print("=" * 70)
+    print("STEP 1: Evaluate original FP16 model")
+    print("=" * 70)
+    original_acc, original_loss = evaluate_model(model, test_loader, device, desc="FP16 baseline")
+    print(f"\n  Accuracy: {original_acc * 100:.2f}%   Loss: {original_loss:.4f}\n")
 
-    results_path = output_dir / 'fp8_quantization_results.json'
-    with open(results_path, 'w') as f:
+    print("=" * 70)
+    print("STEP 2: Per-tensor FP8 E4M3FN quantization")
+    print("=" * 70)
+    model = quantize_model(model, granularity="per_tensor")
+    pt_acc, pt_loss = evaluate_model(model, test_loader, device, desc="Per-tensor FP8")
+    pt_errors = compute_layer_errors(original_params, model)
+    pt_degradation = (original_acc - pt_acc) * 100
+    print(f"\n  Accuracy: {pt_acc * 100:.2f}%   Loss: {pt_loss:.4f}")
+    print(f"  Degradation vs FP16: {pt_degradation:+.2f} pp\n")
+
+    print("=" * 70)
+    print("STEP 3: Per-channel FP8 E4M3FN quantization")
+    print("=" * 70)
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            if name in original_params:
+                param.data.copy_(original_params[name])
+
+    model = quantize_model(model, granularity="per_channel")
+    pc_acc, pc_loss = evaluate_model(model, test_loader, device, desc="Per-channel FP8")
+    pc_errors = compute_layer_errors(original_params, model)
+    pc_degradation = (original_acc - pc_acc) * 100
+    print(f"\n  Accuracy: {pc_acc * 100:.2f}%   Loss: {pc_loss:.4f}")
+    print(f"  Degradation vs FP16: {pc_degradation:+.2f} pp\n")
+
+    results = {
+        "experiment": "FP8Test",
+        "source_model": str(source_path),
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "pytorch_version": torch.__version__,
+        "fp8_dtype": "float8_e4m3fn",
+        "fp8_max": FP8_MAX,
+        "original_fp16": {
+            "accuracy": float(original_acc),
+            "accuracy_percent": round(original_acc * 100, 4),
+            "loss": float(original_loss),
+        },
+        "per_tensor": {
+            "accuracy": float(pt_acc),
+            "accuracy_percent": round(pt_acc * 100, 4),
+            "loss": float(pt_loss),
+            "degradation_pp": round(float(pt_degradation), 4),
+            "relative_degradation": round(float(pt_degradation / (original_acc * 100)), 6),
+            "loss_increase": round(float(pt_loss - original_loss), 4),
+            "layer_errors": pt_errors,
+        },
+        "per_channel": {
+            "accuracy": float(pc_acc),
+            "accuracy_percent": round(pc_acc * 100, 4),
+            "loss": float(pc_loss),
+            "degradation_pp": round(float(pc_degradation), 4),
+            "relative_degradation": round(float(pc_degradation / (original_acc * 100)), 6),
+            "loss_increase": round(float(pc_loss - original_loss), 4),
+            "layer_errors": pc_errors,
+        },
+        "quantization_config": {
+            "format": "e4m3fn",
+            "fp8_max": FP8_MAX,
+            "quantize_weights": True,
+            "quantize_activations": False,
+            "granularities_compared": ["per_tensor", "per_channel"],
+        },
+    }
+
+    output_dir = Path("results/FP8Test/metrics")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results_path = output_dir / "fp8_quantization_results.json"
+    with open(results_path, "w") as f:
         json.dump(results, f, indent=2)
 
-    # Print summary
-    print("="*70)
-    print("FP8 QUANTIZATION SUMMARY")
-    print("="*70)
-    print(f"\nOriginal FP16 Accuracy:   {original_acc:.4f} ({original_acc*100:.2f}%)")
-    print(f"Quantized FP8 Accuracy:   {quantized_acc:.4f} ({quantized_acc*100:.2f}%)")
-    print(f"Accuracy Degradation:     {acc_loss:.4f} ({acc_loss_percent:.2f}%)")
-    print(f"\nOriginal FP16 Loss:       {original_loss:.4f}")
-    print(f"Quantized FP8 Loss:       {quantized_loss:.4f}")
-    print(f"Loss Increase:            {loss_increase:.4f}")
+    # ------------------------------------------------------------------
+    # Summary
+    # ------------------------------------------------------------------
+    print("=" * 70)
+    print("SUMMARY")
+    print("=" * 70)
+    print(f"\n{'Method':<20} {'Accuracy':>10} {'Degradation':>14} {'Loss':>10}")
+    print("-" * 58)
+    print(f"{'FP16 (original)':<20} {original_acc*100:>9.2f}%  {'—':>14} {original_loss:>10.4f}")
+    print(f"{'FP8 per-tensor':<20} {pt_acc*100:>9.2f}%  {pt_degradation:>+13.2f}pp {pt_loss:>10.4f}")
+    print(f"{'FP8 per-channel':<20} {pc_acc*100:>9.2f}%  {pc_degradation:>+13.2f}pp {pc_loss:>10.4f}")
 
-    print(f"\n{'='*70}")
+    improvement = pt_degradation - pc_degradation
+    print(f"\nPer-channel reduces degradation by {improvement:+.2f} pp vs per-tensor")
 
-    # Interpretation
-    if acc_loss_percent < 1.0:
-        print("Excellent! <1% accuracy loss - FP8 is highly viable!")
-    elif acc_loss_percent < 3.0:
-        print("Good! <3% accuracy loss - FP8 is viable for deployment")
-    elif acc_loss_percent < 5.0:
-        print("Moderate: 3-5% accuracy loss - Consider QAT (Quantization-Aware Training)")
-    else:
-        print("High degradation: >5% accuracy loss - FP8 may not be suitable")
+    def interpret(degradation_pp):
+        if degradation_pp < 1.0:
+            return "Excellent — FP8 highly viable for deployment"
+        elif degradation_pp < 3.0:
+            return "Good — FP8 viable for deployment"
+        elif degradation_pp < 5.0:
+            return "Moderate — consider QAT"
+        else:
+            return "High degradation — FP8 may not be suitable without QAT"
 
+    print(f"\nPer-tensor:  {interpret(pt_degradation)}")
+    print(f"Per-channel: {interpret(pc_degradation)}")
     print(f"\nResults saved to: {results_path}")
-    print("="*70 + "\n")
+    print("=" * 70 + "\n")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -1,26 +1,7 @@
 """
-General Training Script for Vision Transformer Experiments.
+Flexible training script for ViT experiments, driven by YAML config files.
 
-This script provides a flexible training pipeline that reads configuration from YAML files.
-Supports all experiment types: FP32, FP16, different augmentation strategies, etc.
-
-Usage:
-    $ python scripts/train.py --config configs/BaseFP32.yaml
-    $ python scripts/train.py --config configs/AugmFP16.yaml --device cuda
-
-Features:
-    - Automatic hardware monitoring (CPU, memory, thermal, GPU on Apple Silicon)
-    - Mixed precision training (AMP) for FP16/FP32
-    - Wall-clock timing tracking with detailed reports
-    - Comprehensive metrics and checkpointing
-    - GPU monitoring (automatically requests sudo on Apple Silicon)
-
-Output:
-    - Checkpoints: results/{ExperimentName}/checkpoints/
-    - Metrics: results/{ExperimentName}/metrics/final_metrics.json
-    - Timing: results/{ExperimentName}/metrics/timing_report.json
-    - Hardware: results/{ExperimentName}/metrics/hardware_stats.json
-    - GPU stats: results/{ExperimentName}/metrics/gpu_stats.csv (if sudo granted)
+Usage: python scripts/train.py --config configs/BaseFP32.yaml [--device mps|cuda|cpu]
 """
 
 import sys
@@ -41,28 +22,14 @@ from src.training.trainer import ViTTrainer
 
 
 def load_config(config_path):
-    """
-    Load experiment configuration from YAML file.
-
-    Args:
-        config_path (str): Path to YAML config file
-
-    Returns:
-        dict: Configuration dictionary
-    """
+    """Load and return experiment config from a YAML file."""
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     return config
 
 
 def save_timing_report(timing_data, output_path):
-    """
-    Save detailed timing report to JSON file.
-
-    Args:
-        timing_data (dict): Timing statistics
-        output_path (Path): Where to save the report
-    """
+    """Save timing stats dict to a JSON file."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -81,14 +48,12 @@ def main():
                         help='Override device from config (mps, cuda, cpu)')
     args = parser.parse_args()
 
-    # Load configuration
     print(f"\n{'='*70}")
     print(f"Loading configuration from: {args.config}")
     print(f"{'='*70}\n")
 
     config = load_config(args.config)
 
-    # Override device if specified
     if args.device:
         config['hardware']['device'] = args.device
 
@@ -109,7 +74,6 @@ def main():
     print(f"  Device: {config['hardware']['device']}")
     print()
 
-    # Create model
     print("Creating model...")
     model = create_vit_model(
         model_name=config['model']['name'],
@@ -119,7 +83,6 @@ def main():
     model_info = get_model_info(model)
     print(f"✓ Model created: {model_info['trainable_params_millions']:.2f}M parameters\n")
 
-    # Create data loaders
     print("Loading CIFAR-10 dataset...")
     train_loader, test_loader = get_cifar10_loaders(
         batch_size=config['data']['batch_size'],
@@ -129,7 +92,6 @@ def main():
     )
     print(f"✓ Data loaders ready: {len(train_loader)} train batches, {len(test_loader)} test batches\n")
 
-    # Initialize trainer
     print("Initializing trainer...")
     trainer = ViTTrainer(
         model=model,
@@ -146,7 +108,6 @@ def main():
     )
     print("Trainer initialized\n")
 
-    # Record start time
     start_time = time.time()
     start_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(f"Training started at: {start_timestamp}\n")
@@ -158,12 +119,10 @@ def main():
             save_every=config['training']['save_every']
         )
 
-        # Record end time
         end_time = time.time()
         end_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         total_duration = end_time - start_time
 
-        # Calculate timing statistics
         timing_data = {
             'experiment_name': config['name'],
             'start_time': start_timestamp,
@@ -179,7 +138,6 @@ def main():
             'config_file': args.config
         }
 
-        # Save timing report
         timing_report_path = Path(config['paths']['save_dir']).parent / 'metrics' / 'timing_report.json'
         save_timing_report(timing_data, timing_report_path)
 

@@ -1,24 +1,8 @@
 """
-Comprehensive experiment comparison and analysis.
+Compare all four ViT experiments (performance, timing, hardware).
 
-This script performs complete analysis of all ViT training experiments:
-- Performance metrics (accuracy, loss, overfitting)
-- Training time statistics (duration, per-epoch timing)
-- Hardware utilization (CPU, memory, thermal)
-- Statistical analysis (convergence, stability)
-
-Generates structured data files for plotting and table generation:
-- CSV files for metrics comparison
-- JSON files for plotting scripts
-- Console summary of results
-
-Usage:
-    $ python scripts/compare_experiments.py
-
-Output Files:
-    - results/comparison_table.csv - Main comparison data
-    - results/experiment_comparison.json - Full metrics for plotting
-    - Console output with summary statistics
+Outputs: results/comparison_table.csv and results/experiment_comparison.json
+Usage: python scripts/compare_experiments.py
 """
 
 import json
@@ -30,27 +14,10 @@ import csv
 
 
 def load_experiment_data(experiment_name):
-    """
-    Load all data for an experiment (metrics, timing, hardware).
-
-    Args:
-        experiment_name (str): Name of experiment (e.g., 'BaseFP32')
-
-    Returns:
-        dict: Complete experiment data with keys:
-            - metrics: Training/validation metrics per epoch
-            - timing: Timing report (duration, avg epoch time, etc.)
-            - hardware: Hardware stats (CPU, memory, thermal)
-            - exists: True if all required files exist
-
-    Example:
-        >>> data = load_experiment_data('BaseFP32')
-        >>> print(f"Best accuracy: {max(data['metrics']['val_acc']):.4f}")
-    """
+    """Load metrics, timing, and hardware JSON files for an experiment; returns dict with 'exists' flag."""
     exp_path = Path('results') / experiment_name
     metrics_dir = exp_path / 'metrics'
 
-    # Check if experiment exists
     if not exp_path.exists():
         return {'exists': False, 'name': experiment_name}
 
@@ -62,19 +29,16 @@ def load_experiment_data(experiment_name):
         'hardware': None
     }
 
-    # Load final_metrics.json
     metrics_file = metrics_dir / 'final_metrics.json'
     if metrics_file.exists():
         with open(metrics_file, 'r') as f:
             data['metrics'] = json.load(f)
 
-    # Load timing_report.json
     timing_file = metrics_dir / 'timing_report.json'
     if timing_file.exists():
         with open(timing_file, 'r') as f:
             data['timing'] = json.load(f)
 
-    # Load hardware_stats.json
     hardware_file = metrics_dir / 'hardware_stats.json'
     if hardware_file.exists():
         with open(hardware_file, 'r') as f:
@@ -84,25 +48,7 @@ def load_experiment_data(experiment_name):
 
 
 def compute_comprehensive_metrics(data):
-    """
-    Compute comprehensive metrics from experiment data.
-
-    Calculates all metrics needed for scientific reports:
-    - Performance: best/final accuracy, overfitting gap, loss
-    - Timing: total duration, per-epoch stats with std dev
-    - Hardware: CPU/memory avg/max, thermal throttling
-    - Analysis: convergence epoch, training stability
-
-    Args:
-        data (dict): Experiment data from load_experiment_data()
-
-    Returns:
-        dict: Comprehensive metrics dictionary
-
-    Example:
-        >>> metrics = compute_comprehensive_metrics(data)
-        >>> print(f"Overfitting: {metrics['overfitting_gap']:.2f}%")
-    """
+    """Compute performance, timing, and hardware metrics from experiment data dict."""
     if not data['exists'] or not data['metrics']:
         return None
 
@@ -110,14 +56,12 @@ def compute_comprehensive_metrics(data):
     timing = data.get('timing', {})
     hardware = data.get('hardware', {})
 
-    # Extract time-series data
     train_loss = metrics.get('train_loss', [])
     val_loss = metrics.get('val_loss', [])
     train_acc = metrics.get('train_acc', [])
     val_acc = metrics.get('val_acc', [])
     epoch_times = metrics.get('epoch_time', [])
 
-    # Performance Metrics
     best_val_acc = max(val_acc) if val_acc else 0.0
     best_val_acc_epoch = val_acc.index(best_val_acc) + 1 if val_acc else 0
     final_val_acc = val_acc[-1] if val_acc else 0.0
@@ -125,34 +69,29 @@ def compute_comprehensive_metrics(data):
     final_val_loss = val_loss[-1] if val_loss else 0.0
     final_train_loss = train_loss[-1] if train_loss else 0.0
 
-    # Overfitting Analysis
-    overfitting_gap = (final_train_acc - final_val_acc) * 100  # in percentage
-    overfitting_score = best_val_acc - final_val_acc  # degradation from best
+    overfitting_gap = (final_train_acc - final_val_acc) * 100
+    overfitting_score = best_val_acc - final_val_acc
 
-    # Convergence Analysis (when did it reach 99.5% of best accuracy?)
+    # First epoch reaching 99.5% of best accuracy
     threshold = best_val_acc * 0.995
     convergence_epochs = [i+1 for i, acc in enumerate(val_acc) if acc >= threshold]
     convergence_epoch = convergence_epochs[0] if convergence_epochs else len(val_acc)
 
-    # Timing Metrics
     num_epochs = len(train_loss)
     total_time_hours = timing.get('total_duration_hours', 0.0)
     total_time_minutes = timing.get('total_duration_minutes', 0.0)
 
-    # Epoch time statistics
     if epoch_times:
         avg_epoch_time = np.mean(epoch_times)
         std_epoch_time = np.std(epoch_times)
         min_epoch_time = np.min(epoch_times)
         max_epoch_time = np.max(epoch_times)
     else:
-        # Fallback to overall average
         avg_epoch_time = timing.get('avg_epoch_time_seconds', 0.0)
         std_epoch_time = 0.0
         min_epoch_time = avg_epoch_time
         max_epoch_time = avg_epoch_time
 
-    # Hardware Metrics
     hw_summary = hardware.get('summary', {})
     cpu_avg = hw_summary.get('avg_cpu', 0.0)
     cpu_max = hw_summary.get('max_cpu', 0.0)
@@ -160,9 +99,7 @@ def compute_comprehensive_metrics(data):
     thermal_max = hw_summary.get('max_thermal', 0)
     thermal_throttled = hw_summary.get('throttled', False)
 
-    # Compile comprehensive metrics
     result = {
-        # Performance
         'num_epochs': num_epochs,
         'best_val_acc': best_val_acc,
         'best_val_acc_epoch': best_val_acc_epoch,
@@ -173,23 +110,17 @@ def compute_comprehensive_metrics(data):
         'overfitting_gap': overfitting_gap,
         'overfitting_score': overfitting_score,
         'convergence_epoch': convergence_epoch,
-
-        # Timing
         'total_time_hours': total_time_hours,
         'total_time_minutes': total_time_minutes,
         'avg_epoch_time_sec': avg_epoch_time,
         'std_epoch_time_sec': std_epoch_time,
         'min_epoch_time_sec': min_epoch_time,
         'max_epoch_time_sec': max_epoch_time,
-
-        # Hardware
         'cpu_avg': cpu_avg,
         'cpu_max': cpu_max,
         'mem_avg': mem_avg,
         'thermal_max': thermal_max,
         'thermal_throttled': thermal_throttled,
-
-        # Precision info (inferred from name)
         'precision': 'FP16 (AMP)' if 'FP16' in data['name'] else 'FP32',
         'augmentation': 'Extended' if 'Augm' in data['name'] else 'Basic'
     }
@@ -198,20 +129,13 @@ def compute_comprehensive_metrics(data):
 
 
 def print_comparison_table(experiments_metrics):
-    """
-    Print formatted comparison table to console (LaTeX-style).
-
-    Args:
-        experiments_metrics (dict): Metrics for all experiments
-    """
+    """Print formatted comparison table to console."""
     print("\n" + "="*100)
     print("COMPREHENSIVE EXPERIMENT COMPARISON")
     print("="*100 + "\n")
 
-    # Define experiments order
     exp_order = ['BaseFP32', 'AugmFP32', 'BaseFP16', 'AugmFP16']
 
-    # Performance Metrics
     print("PERFORMANCE METRICS")
     print("-"*100)
     print(f"{'Metric':<30} | {'BaseFP32':<15} | {'AugmFP32':<15} | {'BaseFP16':<15} | {'AugmFP16':<15}")
@@ -286,29 +210,21 @@ def print_comparison_table(experiments_metrics):
 
 
 def print_analysis_summary(experiments_metrics):
-    """
-    Print analysis summary with key insights.
-
-    Args:
-        experiments_metrics (dict): Metrics for all experiments
-    """
+    """Print analysis summary with key insights."""
     print("\n" + "="*100)
     print("ANALYSIS SUMMARY")
     print("="*100 + "\n")
 
-    # Find best accuracy
     best_acc = max(m['best_val_acc'] for m in experiments_metrics.values() if m)
     best_exp = [name for name, m in experiments_metrics.items()
                 if m and m['best_val_acc'] == best_acc][0]
 
-    # Find lowest overfitting
     valid_overfit = {name: m['overfitting_gap']
                      for name, m in experiments_metrics.items() if m}
     best_overfit = min(valid_overfit.values())
     best_overfit_exp = [name for name, gap in valid_overfit.items()
                         if gap == best_overfit][0]
 
-    # Find fastest
     valid_times = {name: m['total_time_hours']
                    for name, m in experiments_metrics.items() if m}
     fastest_time = min(valid_times.values())
@@ -319,7 +235,6 @@ def print_analysis_summary(experiments_metrics):
     print(f"Best Generalization (lowest overfitting): {best_overfit_exp} ({best_overfit:.2f}%)")
     print(f"Fastest Training: {fastest_exp} ({fastest_time:.2f} hours)")
 
-    # FP16 speedup analysis
     if 'BaseFP32' in experiments_metrics and 'BaseFP16' in experiments_metrics:
         if experiments_metrics['BaseFP32'] and experiments_metrics['BaseFP16']:
             fp32_time = experiments_metrics['BaseFP32']['total_time_hours']
@@ -336,7 +251,6 @@ def print_analysis_summary(experiments_metrics):
             reduction = ((fp32_time - fp16_time) / fp32_time) * 100
             print(f"FP16 Speedup (AugmFP16 vs AugmFP32): {speedup:.2f}x faster ({reduction:.0f}% time reduction)")
 
-    # Recommended configuration
     print(f"\nRecommended: AugmFP16")
     if 'AugmFP16' in experiments_metrics and experiments_metrics['AugmFP16']:
         augm = experiments_metrics['AugmFP16']
@@ -349,13 +263,7 @@ def print_analysis_summary(experiments_metrics):
 
 
 def save_comparison_csv(experiments_metrics, output_path='results/comparison_table.csv'):
-    """
-    Save comparison table to CSV file.
-
-    Args:
-        experiments_metrics (dict): Metrics for all experiments
-        output_path (str): Path to save CSV file
-    """
+    """Save comparison table to CSV file."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -364,10 +272,8 @@ def save_comparison_csv(experiments_metrics, output_path='results/comparison_tab
     with open(output_path, 'w', newline='') as f:
         writer = csv.writer(f)
 
-        # Header
         writer.writerow(['Metric', 'BaseFP32', 'AugmFP32', 'BaseFP16', 'AugmFP16'])
 
-        # All metrics
         all_metrics = [
             ('Epochs Trained', 'num_epochs'),
             ('Best Val Accuracy (%)', 'best_val_acc', 100),
@@ -406,13 +312,7 @@ def save_comparison_csv(experiments_metrics, output_path='results/comparison_tab
 
 
 def save_detailed_json(experiments_metrics, output_path='results/experiment_comparison.json'):
-    """
-    Save detailed metrics to JSON for plotting scripts.
-
-    Args:
-        experiments_metrics (dict): Metrics for all experiments
-        output_path (str): Path to save JSON file
-    """
+    """Save detailed metrics to JSON for plotting scripts."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -423,17 +323,10 @@ def save_detailed_json(experiments_metrics, output_path='results/experiment_comp
 
 
 def main():
-    """
-    Main execution function for comprehensive experiment comparison.
-
-    Loads all experiment data, computes metrics, generates comparison
-    tables, and saves outputs for report generation.
-    """
     print("\n" + "="*100)
     print("LOADING EXPERIMENT DATA...")
     print("="*100 + "\n")
 
-    # Load all experiments
     experiments = ['BaseFP32', 'AugmFP32', 'BaseFP16', 'AugmFP16']
     experiments_data = {}
     experiments_metrics = {}
@@ -463,13 +356,9 @@ def main():
         print("  $ python scripts/train_AugmFP16.py")
         sys.exit(1)
 
-    # Print comparison table
     print_comparison_table(experiments_metrics)
-
-    # Print analysis summary
     print_analysis_summary(experiments_metrics)
 
-    # Save outputs
     print("SAVING OUTPUTS...")
     print("-"*100)
     save_comparison_csv(experiments_metrics, 'results/comparison_table.csv')
