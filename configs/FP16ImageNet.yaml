@@ -1,0 +1,43 @@
+name: "FP16ImageNet"
+description: "FP16 static quantization evaluation — ViT-Tiny pretrained on ImageNet-1k"
+
+# Phase 1 of the thesis: FP16 inference-only evaluation on ImageNette (ImageNet proxy)
+# No training — pure evaluation of FP32 vs model.half() on pretrained weights
+
+model:
+  name: "vit_tiny_patch16_224"
+  num_classes: 1000          # Full ImageNet-1k head (pretrained weights)
+  pretrained: true           # Load timm ImageNet-1k weights
+
+data:
+  dataset: "imagenette2-320" # 10-class ImageNet subset (~330 MB, auto-downloaded)
+  data_dir: "./data"
+  batch_size: 64
+  num_workers: 2
+  # Standard ImageNet normalization (different from CIFAR-10)
+  mean: [0.485, 0.456, 0.406]
+  std:  [0.229, 0.224, 0.225]
+  # Val pipeline: Resize(256) → CenterCrop(224)
+
+# Evaluation only — no training
+test_only: true
+
+quantization:
+  enabled: true
+  source_precision: "fp32"
+  target_precision: "fp16"
+  method: "static"           # model.half() — all weights cast to float16
+  # Note: this is weight-only static casting, NOT PyTorch AMP autocast
+
+hardware:
+  device: "mps"              # MacBook Air M4, Apple Silicon MPS backend
+
+paths:
+  data_dir: "./data"
+  save_dir: "results/FP16ImageNet"
+
+# Expected results (reference from literature):
+#   - Top-1 accuracy FP32 on ImageNette: ~98-99%  (task is easy for pretrained ViT)
+#   - Accuracy degradation FP16 vs FP32: < 0.5 pp
+#   - Memory reduction: 2x  (float32 → float16)
+#   - Latency speedup on MPS: 1.2x–1.8x  (hardware-dependent)
