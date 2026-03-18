@@ -1,0 +1,54 @@
+name: "INT8ImageNet"
+description: "INT8 static quantization (per-tensor, scalare liniară) — ViT-Tiny pretrained ImageNet-1k"
+
+# Faza 2 a tezei: cuantizare selectivă weight-only cu INT8
+# Metoda corectă față de torch.float8_e4m3fn:
+#   scale = max(|W|) / 127
+#   q = round(W / scale).clamp(-128, 127).to(int8)
+# Garantează mapare bijectivă la 256 valori discrete.
+
+model:
+  name: "vit_tiny_patch16_224"
+  num_classes: 1000
+  pretrained: true
+
+data:
+  dataset: "imagenette2-320"
+  data_dir: "./data"
+  batch_size: 64
+  num_workers: 2
+
+test_only: true
+
+quantization:
+  enabled: true
+  source_precision: "fp32"
+  target_precision: "int8"
+  method: "per-tensor"          # scalare liniară globală per tensor de ponderi
+  granularity: "weight-only"    # biasul rămâne float32; activările nu se cuantizează
+
+  # Straturi cuantizate (nn.Linear):
+  #   blocks.N.attn.qkv    — proiecție Q, K, V concatenate
+  #   blocks.N.attn.proj   — proiecție output attention
+  #   blocks.N.mlp.fc1     — primul strat FFN
+  #   blocks.N.mlp.fc2     — al doilea strat FFN
+  #   patch_embed.proj     — dacă e Linear (în ViT-Tiny e Conv2d → sărit automat)
+
+  # Straturi EXCLUSE (sensibile sau semantic importante):
+  skip_patterns:
+    - "norm"       # LayerNorm — operează pe statistici, sensibil la erori
+    - "cls_token"  # token clasificare — nu e Linear
+    - "pos_embed"  # embedding pozițional — nu e Linear
+    - "head"       # capul de clasificare — păstrat în FP32 pentru acuratețe maximă
+
+hardware:
+  device: "mps"
+
+paths:
+  data_dir: "./data"
+  save_dir: "results/INT8ImageNet"
+
+# Comparație cu Faza 1 (FP16):
+#   FP16 (model.half()):  2x reducere memorie, ~1.28x speedup, ~0 pp degradare
+#   INT8 (per-tensor):    ~4x reducere memorie teoretică (ponderile),
+#                         degradare așteptată: 0.1–1.0 pp (depinde de distribuția ponderilor)
