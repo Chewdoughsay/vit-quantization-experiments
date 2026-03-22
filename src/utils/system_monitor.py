@@ -1,4 +1,9 @@
-"""Background CPU, memory, and thermal monitoring for macOS training runs."""
+"""
+Background CPU, memory, and thermal monitoring for macOS training runs.
+
+**Legacy** — used only by ``src.training.trainer.ViTTrainer`` in the
+preliminary CIFAR-10 study.
+"""
 import time
 import threading
 import psutil

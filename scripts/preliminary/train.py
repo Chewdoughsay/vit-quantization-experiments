@@ -1,7 +1,13 @@
 """
-Flexible training script for ViT experiments, driven by YAML config files.
+YAML-driven training script for ViT on CIFAR-10.
 
-Usage: python scripts/train.py --config configs/BaseFP32.yaml [--device mps|cuda|cpu]
+**Legacy** — part of the preliminary CIFAR-10 study (BaseFP32 / BaseFP16 /
+AugmFP32 / AugmFP16 experiments).  The main quantization pipeline (Phases
+1-3) uses pretrained ImageNet-1k weights and does not train models.
+
+Usage:
+    python scripts/preliminary/train.py --config configs/preliminary/BaseFP32.yaml
+    python scripts/preliminary/train.py --config configs/preliminary/AugmFP16.yaml --device mps
 """
 
 import sys
@@ -12,8 +18,8 @@ import time
 from pathlib import Path
 from datetime import datetime
 
-# Add project root to path
-project_root = Path(__file__).resolve().parent.parent
+# Add project root so ``src.*`` imports work when running from any directory.
+project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.models.vit_model import create_vit_model, get_model_info
@@ -40,7 +46,7 @@ def save_timing_report(timing_data, output_path):
 
 
 def main():
-    """Main execution function."""
+    """Load config, build model + data loaders, train, and save results."""
     parser = argparse.ArgumentParser(description='Train Vision Transformer on CIFAR-10')
     parser.add_argument('--config', type=str, required=True,
                         help='Path to YAML config file (e.g., configs/BaseFP32.yaml)')

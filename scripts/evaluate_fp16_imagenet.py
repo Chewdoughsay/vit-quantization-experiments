@@ -1,8 +1,11 @@
 """
-FP16 static quantization evaluation on ImageNette (ImageNet proxy).
+Phase 1 — FP16 static quantization evaluation on ImageNette (ImageNet proxy).
 
-Loads ViT-Tiny pretrained on ImageNet-1k, evaluates FP32 vs FP16 (model.half()).
-Auto-downloads ImageNette2-320 (~330 MB) if not already present.
+Loads ViT-Tiny pretrained on ImageNet-1k, evaluates FP32 baseline vs FP16
+(``model.half()``).  Auto-downloads ImageNette2-320 (~330 MB) on first run.
+
+Outputs:
+    results/FP16ImageNet/metrics/fp16_imagenet_results.json
 
 Usage:
     python scripts/evaluate_fp16_imagenet.py
@@ -31,9 +34,9 @@ sys.path.insert(0, str(project_root))
 
 from src.models.vit_model import create_vit_model
 
-# ---------------------------------------------------------------------------
-# ImageNette config
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# ImageNette configuration
+# ═══════════════════════════════════════════════════════════════════════════
 
 IMAGENETTE_URL = "https://s3.amazonaws.com/fast-ai-imageclas/imagenette2-320.tgz"
 
@@ -54,9 +57,9 @@ WNID_TO_IMAGENET = {
 
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Dataset helpers
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def download_imagenette(data_dir: Path) -> Path:
     """Download and extract ImageNette2-320 if not already present."""
@@ -126,9 +129,9 @@ def get_val_loader(dataset_dir: Path, batch_size: int, num_workers: int,
     return loader, build_label_map(val_dataset)
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Evaluation
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 @torch.no_grad()
 def evaluate(
@@ -193,9 +196,9 @@ def model_size_mb(model: nn.Module) -> float:
     return sum(p.numel() * p.element_size() for p in model.parameters()) / (1024 ** 2)
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Main
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def main():
     parser = argparse.ArgumentParser(description="FP16 static evaluation on ImageNette (ImageNet proxy)")

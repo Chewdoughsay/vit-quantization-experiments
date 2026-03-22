@@ -1,13 +1,15 @@
 """
-Generare ploturi raport Faza 2 — INT8 static quantization pe ImageNette.
+Phase 2 report plots — INT8 static quantization on ImageNette.
 
-Citește:
-  results/INT8ImageNet/metrics/int8_imagenet_results.json
-  results/FP16ImageNet/metrics/fp16_imagenet_results.json   (pentru comparație cross-faze)
+Reads:
+    results/INT8ImageNet/metrics/int8_imagenet_results.json
+    results/FP16ImageNet/metrics/fp16_imagenet_results.json  (for cross-phase comparison)
 
-Salvează în: results/INT8ImageNet/plots/
+Outputs:
+    results/INT8ImageNet/plots/
 
-Rulare: python scripts/generate_int8_imagenet_plots.py
+Usage:
+    python scripts/generate_int8_imagenet_plots.py
 """
 
 import json
@@ -19,9 +21,9 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 
-# ---------------------------------------------------------------------------
-# Stil global (identic cu restul raportului)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# Global plot style (consistent with all report plots)
+# ═══════════════════════════════════════════════════════════════════════════
 
 plt.rcParams.update({
     "font.family":       "DejaVu Serif",
@@ -67,9 +69,9 @@ def save(fig: plt.Figure, name: str) -> None:
     print(f"  Saved: {path}")
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Plot 1: Summary 3-panel  (FP32 vs INT8)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def plot_summary(d: dict) -> None:
     fp32 = d["fp32"]
@@ -79,7 +81,7 @@ def plot_summary(d: dict) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(14, 5))
     fig.suptitle(
         "INT8 Static Quantization (per-tensor) — ViT-Tiny on ImageNette\n"
-        "(weight-only, scalare liniară, Apple M4 MPS)",
+        "(weight-only, linear scaling, Apple M4 MPS)",
         fontsize=14, fontweight="bold", y=1.02,
     )
 
@@ -132,16 +134,16 @@ def plot_summary(d: dict) -> None:
     save(fig, "00_summary.png")
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Plot 2: Per-layer MSE bar chart
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def plot_per_layer_mse(d: dict) -> None:
     stats  = d["layer_stats"]
     names  = [s["layer"] for s in stats]
     mse    = [s["mse"]   for s in stats]
 
-    # Etichete scurte: "b7.mlp.fc1" în loc de "blocks.7.mlp.fc1"
+    # Short labels: "b7.mlp.fc1" instead of "blocks.7.mlp.fc1"
     short_names = []
     for n in names:
         n = n.replace("blocks.", "b").replace(".attn.", ".attn.").replace(".mlp.", ".mlp.")
@@ -160,29 +162,29 @@ def plot_per_layer_mse(d: dict) -> None:
     ax.set_xticklabels(short_names, rotation=70, ha="right", fontsize=8)
     ax.set_ylabel("MSE (weight quantization error)")
     ax.set_title("Per-Layer Weight Quantization Error (MSE) — INT8 per-tensor\n"
-                 "Portocaliu = outlieri (>P90)")
+                 "Orange = outliers (>P90)")
     ax.yaxis.set_major_formatter(ticker.ScalarFormatter(useMathText=True))
     ax.ticklabel_format(style="sci", axis="y", scilimits=(0, 0))
 
-    # Linie medie
+    # Mean line
     avg_mse = np.mean(mse)
     ax.axhline(avg_mse, color="gray", linestyle="--", linewidth=1.2,
-               label=f"Medie = {avg_mse:.2e}")
+               label=f"Mean = {avg_mse:.2e}")
     ax.legend()
 
     fig.tight_layout()
     save(fig, "01_per_layer_mse.png")
 
 
-# ---------------------------------------------------------------------------
-# Plot 3: Per-layer scale values (distribuție)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# Plot 3: Per-layer scale values (distribution)
+# ═══════════════════════════════════════════════════════════════════════════
 
 def plot_per_layer_scale(d: dict) -> None:
     stats  = d["layer_stats"]
     scales = [s["scale"] for s in stats]
 
-    # Grupăm pe tip de strat
+    # Group by layer type
     groups = {"attn.qkv": [], "attn.proj": [], "mlp.fc1": [], "mlp.fc2": []}
     for s in stats:
         for key in groups:
@@ -191,20 +193,20 @@ def plot_per_layer_scale(d: dict) -> None:
                 break
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-    fig.suptitle("Distribuția Scale Factor per Strat — INT8 per-tensor",
+    fig.suptitle("Scale Factor Distribution per Layer — INT8 per-tensor",
                  fontsize=14, fontweight="bold")
 
-    # Stânga: scatter toate layerele
+    # Left: scatter all layers
     ax = axes[0]
     ax.scatter(range(len(scales)), scales, color=COLORS["INT8"], s=50, zorder=5)
     ax.set_xlabel("Layer index")
     ax.set_ylabel("Scale factor (max(|W|) / 127)")
-    ax.set_title("Scale per layer (ordinea în model)")
+    ax.set_title("Scale per layer (model order)")
     ax.axhline(np.mean(scales), color="gray", linestyle="--", linewidth=1,
-               label=f"Medie = {np.mean(scales):.5f}")
+               label=f"Mean = {np.mean(scales):.5f}")
     ax.legend()
 
-    # Dreapta: boxplot per tip de strat
+    # Right: boxplot per layer type
     ax = axes[1]
     group_colors = ["#0072B2", "#56B4E9", "#D55E00", "#009E73"]
     bp = ax.boxplot(
@@ -217,15 +219,15 @@ def plot_per_layer_scale(d: dict) -> None:
         patch.set_alpha(0.7)
     ax.set_xticklabels(list(groups.keys()), rotation=20, ha="right")
     ax.set_ylabel("Scale factor")
-    ax.set_title("Scale per tip de strat")
+    ax.set_title("Scale per layer type")
 
     fig.tight_layout()
     save(fig, "02_per_layer_scale.png")
 
 
-# ---------------------------------------------------------------------------
-# Plot 4: Comparație cross-faze  FP32 / FP16 / INT8
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# Plot 4: Cross-phase comparison  FP32 / FP16 / INT8
+# ═══════════════════════════════════════════════════════════════════════════
 
 def plot_cross_phase(d_int8: dict, d_fp16: dict) -> None:
     methods = ["FP32", "FP16", "INT8"]
@@ -249,7 +251,7 @@ def plot_cross_phase(d_int8: dict, d_fp16: dict) -> None:
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     fig.suptitle(
-        "Comparație FP32 / FP16 / INT8 — ViT-Tiny pe ImageNette\n"
+        "Comparison FP32 / FP16 / INT8 — ViT-Tiny on ImageNette\n"
         "(FP16 = model.half()  |  INT8 = per-tensor weight-only)",
         fontsize=13, fontweight="bold", y=1.02,
     )
@@ -288,9 +290,9 @@ def plot_cross_phase(d_int8: dict, d_fp16: dict) -> None:
     save(fig, "03_cross_phase_comparison.png")
 
 
-# ---------------------------------------------------------------------------
-# Plot 5: Accuracy–Memory tradeoff  (scatter)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# Plot 5: Accuracy–Memory tradeoff scatter
+# ═══════════════════════════════════════════════════════════════════════════
 
 def plot_tradeoff(d_int8: dict, d_fp16: dict) -> None:
     points = {
@@ -303,7 +305,7 @@ def plot_tradeoff(d_int8: dict, d_fp16: dict) -> None:
     fig.suptitle("Accuracy–Efficiency Tradeoff — FP32 / FP16 / INT8",
                  fontsize=14, fontweight="bold")
 
-    # Stânga: Accuracy vs Memory
+    # Left: Accuracy vs Memory
     ax = axes[0]
     for label, (mem, acc) in points.items():
         ax.scatter(mem, acc, s=220, color=COLORS[label], zorder=5,
@@ -315,7 +317,7 @@ def plot_tradeoff(d_int8: dict, d_fp16: dict) -> None:
     ax.set_title("Accuracy vs Memory")
     ax.legend()
 
-    # Dreapta: Accuracy vs Latency
+    # Right: Accuracy vs Latency
     lat_points = {
         "FP32": (d_int8["fp32"]["avg_latency_ms_per_batch"], d_int8["fp32"]["accuracy_percent"]),
         "FP16": (d_fp16["fp16"]["avg_latency_ms_per_batch"], d_fp16["fp16"]["accuracy_percent"]),
@@ -336,9 +338,9 @@ def plot_tradeoff(d_int8: dict, d_fp16: dict) -> None:
     save(fig, "04_tradeoff.png")
 
 
-# ---------------------------------------------------------------------------
-# Text summary Markdown
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# Markdown summary
+# ═══════════════════════════════════════════════════════════════════════════
 
 def write_markdown(d: dict) -> None:
     comp  = d["comparison"]
@@ -414,9 +416,9 @@ def write_markdown(d: dict) -> None:
     print(f"  Saved: {path}")
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Main
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def main() -> None:
     print("\nGenerare ploturi Faza 2 — INT8 ImageNet\n")

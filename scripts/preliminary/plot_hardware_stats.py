@@ -1,7 +1,13 @@
 """
 Hardware monitoring plots (CPU, memory, thermal, power) from training experiment data.
 
-Usage: python scripts/plot_hardware_stats.py [--experiment DIR | --experiments DIR... | --all]
+**Legacy** — part of the preliminary CIFAR-10 study.  Reads
+``hardware_stats.json`` and ``gpu_stats.csv`` produced during training and
+generates system monitoring and power consumption plots.
+
+Usage:
+    python scripts/preliminary/plot_hardware_stats.py --experiment results/preliminary/BaseFP32
+    python scripts/preliminary/plot_hardware_stats.py --all
 """
 
 import json
@@ -39,7 +45,7 @@ def load_hardware_stats(hardware_path):
     try:
         with open(hardware_path, 'r') as f:
             return json.load(f)
-    except:
+    except (json.JSONDecodeError, OSError):
         return None
 
 
@@ -65,7 +71,7 @@ def load_gpu_stats(gpu_path):
                 data['cpu_power'].append(float(row['cpu_power_mW']))
 
         return data
-    except:
+    except (csv.Error, KeyError, ValueError, OSError):
         return None
 
 
@@ -251,13 +257,13 @@ def main():
         epilog="""
 Examples:
   # Plot single experiment
-  python scripts/plot_hardware_stats.py --experiment results/BaseFP32
+  python scripts/plot_hardware_stats.py --experiment results/preliminary/BaseFP32
 
   # Plot all experiments
   python scripts/plot_hardware_stats.py --all
 
   # Plot specific experiments
-  python scripts/plot_hardware_stats.py --experiments results/BaseFP32 results/AugmFP16
+  python scripts/plot_hardware_stats.py --experiments results/preliminary/BaseFP32 results/preliminary/AugmFP16
         """
     )
 
@@ -274,7 +280,7 @@ Examples:
     elif args.experiments:
         experiments.extend(args.experiments)
     elif args.all:
-        results_dir = Path('results')
+        results_dir = Path('results/preliminary')
         if results_dir.exists():
             for exp_dir in results_dir.iterdir():
                 if exp_dir.is_dir() and (exp_dir / 'metrics').exists():

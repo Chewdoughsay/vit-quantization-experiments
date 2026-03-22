@@ -1,8 +1,12 @@
 """
 FP8 E4M3FN post-training quantization evaluation (per-tensor and per-channel).
 
-Compares both granularities against the FP16 baseline. Requires AugmFP16 checkpoint.
-Usage: python scripts/evaluate_fp8_quantization.py
+**Legacy** — part of the preliminary CIFAR-10 study.  Compares FP8 E4M3FN
+quantization at two granularities against the AugmFP16 checkpoint baseline.
+Requires the AugmFP16 experiment to have been trained first.
+
+Usage:
+    python scripts/preliminary/evaluate_fp8_quantization.py
 """
 
 import sys
@@ -12,8 +16,8 @@ import torch.nn.functional as F
 from pathlib import Path
 from datetime import datetime
 
-# Add project root to path
-project_root = Path(__file__).resolve().parent.parent
+# Add project root so ``src.*`` imports work when running from any directory.
+project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.models.vit_model import create_vit_model
@@ -21,9 +25,9 @@ from src.data.dataset import get_cifar10_loaders
 from tqdm import tqdm
 
 
-# ---------------------------------------------------------------------------
-# Quantization functions
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# FP8 quantization primitives
+# ═══════════════════════════════════════════════════════════════════════════
 
 FP8_MAX = torch.finfo(torch.float8_e4m3fn).max  # 448.0 for E4M3FN
 
@@ -56,9 +60,9 @@ def quantize_weight_per_channel(tensor: torch.Tensor) -> torch.Tensor:
     return (quantized / scale_cpu).to(tensor.device)
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Model-level quantization
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def quantize_model(model: torch.nn.Module, granularity: str) -> torch.nn.Module:
     """Quantize all trainable parameters in-place with the given granularity."""
@@ -72,9 +76,9 @@ def quantize_model(model: torch.nn.Module, granularity: str) -> torch.nn.Module:
     return model
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Per-layer error analysis
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def compute_layer_errors(
     original_params: dict[str, torch.Tensor],
@@ -103,9 +107,9 @@ def compute_layer_errors(
     return layer_errors
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Evaluation
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 @torch.no_grad()
 def evaluate_model(
@@ -134,9 +138,9 @@ def evaluate_model(
     return total_correct / total_samples, total_loss / len(test_loader)
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Main
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def main():
     print("\n" + "=" * 70)
@@ -144,12 +148,10 @@ def main():
     print(f"Using native torch.float8_e4m3fn  (max = {FP8_MAX})")
     print("=" * 70 + "\n")
 
-    # ------------------------------------------------------------------
     # Configuration
-    # ------------------------------------------------------------------
     CONFIG = {
         "name": "FP8Test",
-        "source_model": "results/AugmFP16/checkpoints/best_model.pt",
+        "source_model": "results/preliminary/AugmFP16/checkpoints/best_model.pt",
         "model_name": "vit_tiny_patch16_224",
         "num_classes": 10,
         "batch_size": 128,
@@ -265,15 +267,13 @@ def main():
         },
     }
 
-    output_dir = Path("results/FP8Test/metrics")
+    output_dir = Path("results/preliminary/FP8Test/metrics")
     output_dir.mkdir(parents=True, exist_ok=True)
     results_path = output_dir / "fp8_quantization_results.json"
     with open(results_path, "w") as f:
         json.dump(results, f, indent=2)
 
-    # ------------------------------------------------------------------
     # Summary
-    # ------------------------------------------------------------------
     print("=" * 70)
     print("SUMMARY")
     print("=" * 70)

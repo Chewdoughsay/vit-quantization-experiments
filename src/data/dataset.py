@@ -1,4 +1,10 @@
-"""CIFAR-10 data loaders with basic and extended augmentation for 224×224 ViT input."""
+"""
+CIFAR-10 data loaders with basic and extended augmentation for 224×224 ViT input.
+
+**Legacy** — used only by ``scripts/preliminary/train.py`` for the initial
+CIFAR-10 fine-tuning study.  The main quantization pipeline (Phases 1-3)
+downloads ImageNette directly inside each evaluation script.
+"""
 import torch
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms

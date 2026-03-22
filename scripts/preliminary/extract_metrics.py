@@ -1,14 +1,20 @@
 """
-Load, analyze, and compare training metrics from ViT experiment directories.
+Load, analyse, and compare training metrics from ViT experiment directories.
 
-Usage: python scripts/extract_metrics.py [--experiment DIR | --compare DIR... | --all] [--output CSV] [--detailed]
+**Legacy** — part of the preliminary CIFAR-10 study.  Reads
+``final_metrics.json`` files produced by ``train.py`` and prints per-
+experiment statistics or a side-by-side comparison table.
+
+Usage:
+    python scripts/preliminary/extract_metrics.py --experiment results/preliminary/BaseFP32
+    python scripts/preliminary/extract_metrics.py --compare results/preliminary/BaseFP32 results/preliminary/AugmFP16
+    python scripts/preliminary/extract_metrics.py --all --output metrics_summary.csv
 """
 
 import json
 import argparse
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 import numpy as np
 
 
@@ -175,7 +181,7 @@ def compare_experiments(experiment_paths, output_csv=None):
     return results
 
 
-def discover_experiments(results_dir='results'):
+def discover_experiments(results_dir='results/preliminary'):
     """Return sorted list of experiment directories containing final_metrics.json."""
     results_path = Path(results_dir)
 
@@ -200,13 +206,13 @@ def main():
         epilog="""
 Examples:
   # Single experiment
-  python scripts/extract_metrics.py --experiment results/BaseFP32
+  python scripts/extract_metrics.py --experiment results/preliminary/BaseFP32
 
   # Single experiment with detailed stats
-  python scripts/extract_metrics.py --experiment results/BaseFP32 --detailed
+  python scripts/extract_metrics.py --experiment results/preliminary/BaseFP32 --detailed
 
   # Compare multiple experiments
-  python scripts/extract_metrics.py --compare results/BaseFP32 results/BaseFP16 results/AugmFP16
+  python scripts/extract_metrics.py --compare results/preliminary/BaseFP32 results/preliminary/BaseFP16 results/preliminary/AugmFP16
 
   # Extract all experiments and save to CSV
   python scripts/extract_metrics.py --all --output metrics_summary.csv
@@ -216,7 +222,7 @@ Examples:
     parser.add_argument(
         '--experiment',
         type=str,
-        help='Path to single experiment directory (e.g., results/BaseFP32)'
+        help='Path to single experiment directory (e.g., results/preliminary/BaseFP32)'
     )
     parser.add_argument(
         '--compare',
@@ -266,7 +272,7 @@ Examples:
     # All experiments mode
     elif args.all:
         print("Discovering experiments in results/ directory...")
-        experiments = discover_experiments('results')
+        experiments = discover_experiments('results/preliminary')
 
         if not experiments:
             print("No experiments found in results/ directory")

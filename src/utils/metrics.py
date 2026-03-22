@@ -1,4 +1,10 @@
-"""Metrics tracking, accuracy calculation, and timing utilities for ViT training."""
+"""
+Metrics tracking, accuracy calculation, and timing utilities for ViT training.
+
+**Legacy** — used only by ``src.training.trainer.ViTTrainer`` in the
+preliminary CIFAR-10 study.  The main quantization pipeline computes and
+saves metrics inline.
+"""
 import time
 import json
 from pathlib import Path

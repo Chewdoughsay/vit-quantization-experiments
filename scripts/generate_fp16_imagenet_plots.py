@@ -1,10 +1,11 @@
 """
-Generare ploturi raport Faza 1 — FP16 static pe ImageNette.
+Phase 1 report plots — FP16 static quantization on ImageNette.
 
-Citește results/FP16ImageNet/metrics/fp16_imagenet_results.json
-și salvează toate figurile în results/FP16ImageNet/plots/.
+Reads ``results/FP16ImageNet/metrics/fp16_imagenet_results.json`` and saves
+all figures to ``results/FP16ImageNet/plots/``.
 
-Rulare: python scripts/generate_fp16_imagenet_plots.py
+Usage:
+    python scripts/generate_fp16_imagenet_plots.py
 """
 
 import json
@@ -16,9 +17,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 
-# ---------------------------------------------------------------------------
-# Configurare globală stil (identic cu generate_report_plots.py)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# Global plot style
+# ═══════════════════════════════════════════════════════════════════════════
 
 plt.rcParams.update({
     "font.family":       "DejaVu Serif",
@@ -41,7 +42,7 @@ plt.rcParams.update({
 SAVE_DPI = 300
 
 COLORS = {
-    "FP32": "#0072B2",   # albastru
+    "FP32": "#0072B2",   # blue
     "FP16": "#009E73",   # teal
 }
 
@@ -63,9 +64,9 @@ def save(fig: plt.Figure, name: str) -> Path:
     return path
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Plot 1: Accuracy comparison  (bar chart)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def plot_accuracy(data: dict) -> None:
     fp32_acc = data["fp32"]["accuracy_percent"]
@@ -82,7 +83,7 @@ def plot_accuracy(data: dict) -> None:
         linewidth=1.2,
     )
 
-    # Valori deasupra barelor
+    # Values above bars
     for bar, val in zip(bars, [fp32_acc, fp16_acc]):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
@@ -110,9 +111,9 @@ def plot_accuracy(data: dict) -> None:
     save(fig, "01_accuracy_comparison.png")
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Plot 2: Memory footprint  (bar chart)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def plot_memory(data: dict) -> None:
     fp32_mem = data["fp32"]["memory_mb"]
@@ -154,9 +155,9 @@ def plot_memory(data: dict) -> None:
     save(fig, "02_memory_comparison.png")
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Plot 3: Inference latency  (bar chart)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def plot_latency(data: dict) -> None:
     lat_fp32 = data["fp32"]["avg_latency_ms_per_batch"]
@@ -199,9 +200,9 @@ def plot_latency(data: dict) -> None:
     save(fig, "03_latency_comparison.png")
 
 
-# ---------------------------------------------------------------------------
-# Plot 4: Summary overview  (3 subplots pe un singur canvas)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# Plot 4: Summary overview  (3 subplots on a single canvas)
+# ═══════════════════════════════════════════════════════════════════════════
 
 def plot_summary(data: dict) -> None:
     fp32_acc = data["fp32"]["accuracy_percent"]
@@ -223,7 +224,7 @@ def plot_summary(data: dict) -> None:
     labels = ["FP32", "FP16"]
     colors = [COLORS["FP32"], COLORS["FP16"]]
 
-    # -- Accuracy
+    # Accuracy
     ax = axes[0]
     bars = ax.bar(labels, [fp32_acc, fp16_acc], color=colors, width=0.5,
                   edgecolor="white", linewidth=1.2)
@@ -237,7 +238,7 @@ def plot_summary(data: dict) -> None:
     ax.text(0.97, 0.04, f"Δ = {sign}{deg:.4f} pp",
             transform=ax.transAxes, ha="right", va="bottom", color="gray", fontsize=10)
 
-    # -- Memory
+    # Memory
     ax = axes[1]
     bars = ax.bar(labels, [fp32_mem, fp16_mem], color=colors, width=0.5,
                   edgecolor="white", linewidth=1.2)
@@ -250,7 +251,7 @@ def plot_summary(data: dict) -> None:
     ax.text(0.97, 0.96, "2.00× reduction",
             transform=ax.transAxes, ha="right", va="top", color="gray", fontsize=10)
 
-    # -- Latency
+    # Latency
     ax = axes[2]
     bars = ax.bar(labels, [lat_fp32, lat_fp16], color=colors, width=0.5,
                   edgecolor="white", linewidth=1.2)
@@ -268,9 +269,9 @@ def plot_summary(data: dict) -> None:
     save(fig, "00_summary.png")
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Plot 5: Accuracy-Latency tradeoff scatter
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def plot_tradeoff(data: dict) -> None:
     points = {
@@ -300,9 +301,9 @@ def plot_tradeoff(data: dict) -> None:
     save(fig, "04_accuracy_latency_tradeoff.png")
 
 
-# ---------------------------------------------------------------------------
-# Text summary (Markdown)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# Markdown summary
+# ═══════════════════════════════════════════════════════════════════════════
 
 def write_markdown(data: dict) -> None:
     deg      = data["comparison"]["accuracy_degradation_pp"]
@@ -359,9 +360,9 @@ def write_markdown(data: dict) -> None:
     print(f"  Saved: {path}")
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Main
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def main() -> None:
     print("\nGenerare ploturi Faza 1 — FP16 ImageNet\n")

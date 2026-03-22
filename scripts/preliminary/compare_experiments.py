@@ -1,21 +1,28 @@
 """
-Compare all four ViT experiments (performance, timing, hardware).
+Compare all four preliminary ViT experiments (performance, timing, hardware).
 
-Outputs: results/comparison_table.csv and results/experiment_comparison.json
-Usage: python scripts/compare_experiments.py
+**Legacy** — part of the preliminary CIFAR-10 study.  Loads metrics from
+BaseFP32 / AugmFP32 / BaseFP16 / AugmFP16 and outputs a comparison table
+plus a detailed JSON file for downstream plotting.
+
+Outputs:
+    results/comparison_table.csv
+    results/experiment_comparison.json
+
+Usage:
+    python scripts/preliminary/compare_experiments.py
 """
 
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 import numpy as np
 import csv
 
 
 def load_experiment_data(experiment_name):
     """Load metrics, timing, and hardware JSON files for an experiment; returns dict with 'exists' flag."""
-    exp_path = Path('results') / experiment_name
+    exp_path = Path('results/preliminary') / experiment_name
     metrics_dir = exp_path / 'metrics'
 
     if not exp_path.exists():
@@ -262,7 +269,7 @@ def print_analysis_summary(experiments_metrics):
     print("="*100 + "\n")
 
 
-def save_comparison_csv(experiments_metrics, output_path='results/comparison_table.csv'):
+def save_comparison_csv(experiments_metrics, output_path='results/preliminary/comparison_table.csv'):
     """Save comparison table to CSV file."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -311,7 +318,7 @@ def save_comparison_csv(experiments_metrics, output_path='results/comparison_tab
     print(f"Comparison table saved to: {output_path}")
 
 
-def save_detailed_json(experiments_metrics, output_path='results/experiment_comparison.json'):
+def save_detailed_json(experiments_metrics, output_path='results/preliminary/experiment_comparison.json'):
     """Save detailed metrics to JSON for plotting scripts."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -361,13 +368,13 @@ def main():
 
     print("SAVING OUTPUTS...")
     print("-"*100)
-    save_comparison_csv(experiments_metrics, 'results/comparison_table.csv')
-    save_detailed_json(experiments_metrics, 'results/experiment_comparison.json')
+    save_comparison_csv(experiments_metrics, 'results/preliminary/comparison_table.csv')
+    save_detailed_json(experiments_metrics, 'results/preliminary/experiment_comparison.json')
     print("="*100 + "\n")
 
     print("Analysis complete! Use the generated files for your report:")
-    print("   - results/comparison_table.csv (for LaTeX tables)")
-    print("   - results/experiment_comparison.json (for plotting)")
+    print("   - results/preliminary/comparison_table.csv (for LaTeX tables)")
+    print("   - results/preliminary/experiment_comparison.json (for plotting)")
     print()
 
 

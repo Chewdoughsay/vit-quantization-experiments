@@ -1,11 +1,15 @@
 """
-INT8 static quantization evaluation pe ImageNette (ImageNet proxy).
+Phase 2 — INT8 weight-only quantization evaluation on ImageNette (ImageNet proxy).
 
-Cuantizare selectivă: doar nn.Linear din Attention + MLP (per-tensor, scalare liniară).
-Sare: LayerNorm, cls_token, pos_embed, head.
+Selective quantization: only nn.Linear layers in Attention (qkv, proj) and
+MLP (fc1, fc2) are quantized with per-tensor linear scaling.  LayerNorm,
+cls_token, pos_embed, and the classification head are kept in float32.
 
-Compară FP32 baseline vs INT8 (weight-only): acuratețe, latență, memorie,
-plus statistici de eroare per strat (MSE, MAE).
+Compares FP32 baseline vs INT8: accuracy, latency, memory, and per-layer
+quantization error (MSE, MAE, scale).
+
+Outputs:
+    results/INT8ImageNet/metrics/int8_imagenet_results.json
 
 Usage:
     python scripts/evaluate_int8_quantization.py
@@ -32,9 +36,9 @@ sys.path.insert(0, str(project_root))
 from src.models.vit_model import create_vit_model
 from src.models.quantized_linear import quantize_model_selective, SKIP_PATTERNS
 
-# ---------------------------------------------------------------------------
-# ImageNette label mapping (identic cu evaluate_fp16_imagenet.py)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# ImageNette label mapping (shared with evaluate_fp16_imagenet.py)
+# ═══════════════════════════════════════════════════════════════════════════
 
 WNID_TO_IMAGENET = {
     "n01440764": 0,    # tench
@@ -50,9 +54,9 @@ WNID_TO_IMAGENET = {
 }
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Dataset
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def build_label_map(dataset: datasets.ImageFolder) -> list[int]:
     mapping = [None] * len(dataset.classes)
@@ -79,9 +83,9 @@ def get_val_loader(
     return loader, build_label_map(val_dataset)
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Evaluation
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 @torch.no_grad()
 def evaluate(
@@ -134,9 +138,9 @@ def evaluate(
     }
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Memory helpers
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def model_size_mb(model: nn.Module) -> float:
     """Parameter + buffer memory in MB."""
@@ -156,9 +160,9 @@ def count_linear_params(model: nn.Module) -> dict:
     return {"quantized_weight_params": q_params}
 
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 # Main
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
 
 def main():
     parser = argparse.ArgumentParser(description="INT8 static quantization on ImageNette")
@@ -181,11 +185,11 @@ def main():
     # ------------------------------------------------------------------
     dataset_dir = data_dir / "imagenette2-320"
     if not dataset_dir.exists():
-        print(f"EROARE: ImageNette nu există la {dataset_dir}.")
-        print("Rulează mai întâi: python scripts/evaluate_fp16_imagenet.py")
+        print(f"ERROR: ImageNette not found at {dataset_dir}.")
+        print("Run Phase 1 first: python scripts/evaluate_fp16_imagenet.py")
         raise SystemExit(1)
 
-    # Folosim timm data config pentru preprocessing corect
+    # Use timm's own data config for correct preprocessing
     _tmp_model = create_vit_model("vit_tiny_patch16_224", num_classes=1000, pretrained=False)
     data_config   = timm.data.resolve_data_config({}, model=_tmp_model)
     val_transform = timm.data.create_transform(**data_config, is_training=False)
@@ -217,13 +221,13 @@ def main():
     # STEP 2: INT8 cuantizare selectivă
     # ------------------------------------------------------------------
     print("=" * 70)
-    print("STEP 2: INT8 static (weight-only, per-tensor, scalare liniară)")
+    print("STEP 2: INT8 static (weight-only, per-tensor, linear scaling)")
     print(f"  Skip patterns: {SKIP_PATTERNS}")
     print("=" * 70)
 
     model_int8 = create_vit_model("vit_tiny_patch16_224", num_classes=1000, pretrained=True)
 
-    # Cuantizare pe CPU (operații numpy-like); mutăm pe device după
+    # Quantize on CPU (numpy-like ops), then move to device
     model_int8, layer_stats = quantize_model_selective(model_int8, verbose=True)
     model_int8 = model_int8.to(device).eval()
 
@@ -264,7 +268,7 @@ def main():
         "device":          args.device,
         "batch_size":      args.batch_size,
         "quantization": {
-            "method":          "per-tensor INT8 (scalare liniară)",
+            "method":          "per-tensor INT8 (linear scaling)",
             "skip_patterns":   SKIP_PATTERNS,
             "n_layers_quant":  len(layer_stats),
             "total_q_params":  total_q_params,
@@ -314,7 +318,7 @@ def main():
     print(f"Memory reduction     : {fp32_mem / int8_mem:.2f}x")
     if speedup:
         print(f"Latency speedup      : {speedup:.2f}x")
-    print(f"\nLayere cuantizate    : {len(layer_stats)}")
+    print(f"\nQuantized layers     : {len(layer_stats)}")
     print(f"Avg MSE per layer    : {avg_mse:.4e}")
     print(f"Worst layer (MSE)    : {worst_layer['layer']}  ({worst_layer['mse']:.4e})")
     print(f"\nResults saved → {results_path}")

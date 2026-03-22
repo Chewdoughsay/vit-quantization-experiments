@@ -1,6 +1,10 @@
 """
-Trainer class for Vision Transformer models
-Includes: Mixed Precision (AMP), Hardware Monitoring, Metrics Tracking
+Trainer class for Vision Transformer models.
+Includes: Mixed Precision (AMP), Hardware Monitoring, Metrics Tracking.
+
+**Legacy** — used only by ``scripts/preliminary/train.py`` for the initial
+CIFAR-10 fine-tuning study.  The main quantization pipeline (Phases 1-3)
+performs inference-only evaluation and does not use a training loop.
 """
 import torch
 import torch.nn as nn

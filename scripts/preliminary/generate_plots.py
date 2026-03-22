@@ -1,14 +1,20 @@
 """
 Generate publication-quality training curve and comparison plots from experiment metrics.
 
-Usage: python scripts/generate_plots.py [--experiment DIR | --compare DIR... | --all] [--output DIR]
+**Legacy** — part of the preliminary CIFAR-10 study.  Reads
+``final_metrics.json`` and ``hardware_stats.json`` from experiment directories
+and produces per-experiment training curves and cross-experiment overlays.
+
+Usage:
+    python scripts/preliminary/generate_plots.py --experiment results/preliminary/BaseFP32
+    python scripts/preliminary/generate_plots.py --compare results/preliminary/BaseFP32 results/preliminary/AugmFP16
+    python scripts/preliminary/generate_plots.py --all
 """
 
 import json
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Dict, Optional
 import numpy as np
 
 import matplotlib
@@ -263,13 +269,13 @@ def main():
         epilog="""
 Examples:
   # Plot single experiment
-  python scripts/generate_plots.py --experiment results/BaseFP32
+  python scripts/generate_plots.py --experiment results/preliminary/BaseFP32
 
   # Plot with custom output directory
-  python scripts/generate_plots.py --experiment results/BaseFP32 --output custom_plots/
+  python scripts/generate_plots.py --experiment results/preliminary/BaseFP32 --output custom_plots/
 
   # Compare multiple experiments
-  python scripts/generate_plots.py --compare results/BaseFP32 results/BaseFP16 results/AugmFP16
+  python scripts/generate_plots.py --compare results/preliminary/BaseFP32 results/preliminary/BaseFP16 results/preliminary/AugmFP16
 
   # Plot all experiments
   python scripts/generate_plots.py --all
@@ -341,8 +347,10 @@ Examples:
     elif args.compare or args.all:
         if args.all:
             # Discover all experiments
+            # Import from sibling module in the same directory.
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
             from extract_metrics import discover_experiments
-            exp_paths = discover_experiments('results')
+            exp_paths = discover_experiments('results/preliminary')
             print(f"Found {len(exp_paths)} experiments: {[e.name for e in exp_paths]}\n")
         else:
             exp_paths = [Path(p) for p in args.compare]
@@ -354,7 +362,7 @@ Examples:
         if args.output:
             output_dir = Path(args.output)
         else:
-            output_dir = Path('results') / 'comparison_plots'
+            output_dir = Path('results/preliminary') / 'comparison_plots'
 
         print(f"Output directory: {output_dir}\n")
 

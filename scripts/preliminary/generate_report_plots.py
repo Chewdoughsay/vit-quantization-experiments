@@ -1,8 +1,13 @@
 """
-ViT-FP8 report generator: reads all experiment data, rebuilds comparison files,
-and generates all publication-quality figures plus results/summary.md.
+Full report generator for the preliminary CIFAR-10 study.
 
-Run from the project root: python generate_report_plots.py
+**Legacy** — reads all four preliminary experiment directories (BaseFP32 /
+BaseFP16 / AugmFP32 / AugmFP16) plus the FP8Test results, rebuilds the
+comparison JSON/CSV, and generates nine publication-quality figures plus
+``results/summary.md``.
+
+Usage:
+    python scripts/preliminary/generate_report_plots.py
 """
 
 import json
@@ -19,7 +24,7 @@ import matplotlib.gridspec as gridspec
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 
-RESULTS_DIR = Path("results")
+RESULTS_DIR = Path("results/preliminary")
 OUTPUT_DIR  = RESULTS_DIR / "report_plots"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -585,7 +590,7 @@ def write_summary(comp: dict, fp8: dict) -> None:
         "",
         "---",
         "",
-        "## Generated Plots (`results/report_plots/`)",
+        "## Generated Plots (`results/preliminary/report_plots/`)",
         "",
         "| File | Description |",
         "|------|-------------|",

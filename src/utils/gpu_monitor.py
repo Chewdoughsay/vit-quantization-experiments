@@ -1,7 +1,11 @@
 """
 Apple Silicon GPU and power monitoring via powermetrics (requires sudo).
 
-Saves GPU utilization, GPU power, and CPU power to CSV for post-training analysis.
+Saves GPU utilization, GPU power, and CPU power to CSV for post-training
+analysis.
+
+**Legacy** — used only by ``src.training.trainer.ViTTrainer`` in the
+preliminary CIFAR-10 study.
 """
 import subprocess
 import csv
