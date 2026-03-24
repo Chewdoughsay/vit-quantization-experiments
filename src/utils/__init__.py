@@ -1,7 +1,8 @@
 """
-src.utils — Metrics tracking and hardware monitoring.  **Legacy** (preliminary study only).
+src.utils — Metrics tracking, hardware monitoring, and plot styling.
 
-This package is used exclusively by scripts/preliminary/train.py and the
-legacy training infrastructure.  The main quantization evaluation pipeline
-(Phases 1-3) handles metrics and timing inline within each evaluation script.
+- ``metrics.py``      — MetricsTracker (legacy, preliminary study only).
+- ``plot_style.py``   — Shared matplotlib style, colors, and save helper (Phases 1-3).
+- ``gpu_monitor.py``  — GPU/system monitoring utilities.
+- ``system_monitor.py`` — System resource tracking.
 """

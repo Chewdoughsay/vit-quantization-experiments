@@ -1,0 +1,432 @@
+% ===========================================================================
+%  Raport — Faza 1: Cuantizare Statică FP16
+%  Evaluare ViT-Tiny pretrained pe ImageNet-1k validation
+%  Tudose Alexandru · Lucrare de Licență 2026
+% ===========================================================================
+\documentclass[12pt,a4paper]{article}
+
+% --- Encoding & fonts (XeTeX / tectonic) ---
+\usepackage{fontspec}
+\defaultfontfeatures{Ligatures=TeX}
+
+% --- Language ---
+\usepackage{polyglossia}
+\setmainlanguage{romanian}
+
+% --- Page geometry ---
+\usepackage[
+  top=2.5cm, bottom=2.5cm,
+  left=2.5cm, right=2.5cm
+]{geometry}
+
+% --- Math ---
+\usepackage{amsmath, amssymb}
+
+% --- Graphics ---
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\captionsetup{font=small, labelfont=bf}
+
+% --- Tables ---
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+
+% --- Colors ---
+\usepackage{xcolor}
+\definecolor{fp32color}{HTML}{0072B2}
+\definecolor{fp16color}{HTML}{009E73}
+\definecolor{int8color}{HTML}{E69F00}
+\definecolor{lightgray}{HTML}{F4F4F4}
+
+% --- Hyperlinks ---
+\usepackage[
+  colorlinks=true,
+  linkcolor=fp32color,
+  citecolor=fp32color,
+  urlcolor=fp32color
+]{hyperref}
+
+% --- Misc ---
+\usepackage{microtype}
+\usepackage{parskip}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+\usepackage{enumitem}
+
+% --- Header / Footer ---
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\small Tudose Alexandru --- Faza 1: FP16 Static Quantization}
+\rhead{\small 2026}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ===========================================================================
+\begin{document}
+% ===========================================================================
+
+% --- Title page ---
+\begin{titlepage}
+  \centering
+  {\large Universitatea Transilvania din Brașov\\}
+  {\small Facultatea de Matematică și Informatică\\}
+  {\small Specializarea: Informatică Aplicată\\[2cm]}
+
+  \rule{\linewidth}{0.4pt}\\[0.5cm]
+  {\LARGE\bfseries Faza 1: Cuantizare Statică FP16\\[0.3cm]}
+  {\Large\bfseries Evaluare ViT-Tiny pretrained\\[0.2cm]}
+  {\Large\bfseries pe ImageNet-1k validation\\[0.2cm]}
+  {\large Post-Training Quantization --- FP32 vs.\ FP16}\\[0.3cm]
+  \rule{\linewidth}{0.4pt}\\[2cm]
+
+  \begin{minipage}{0.45\textwidth}
+    \textbf{Student:}\\
+    Tudose Alexandru\\
+    Grupa 10LF333\\
+    An III, Informatică Aplicată
+  \end{minipage}
+  \hfill
+  \begin{minipage}{0.45\textwidth}
+    \raggedleft
+    \textbf{Coordonator:}\\
+    Conf.\ dr.\ ing.\ Honorius Gâlmeanu\\
+    Departamentul de Informatică
+  \end{minipage}\\[3cm]
+
+  {\small Brașov, 2026}
+\end{titlepage}
+
+% --- TOC ---
+\tableofcontents
+\newpage
+
+% ===========================================================================
+\section{Introducere}
+% ===========================================================================
+
+Acest raport documentează \textbf{Faza~1} a lucrării de licență, în care
+evaluăm impactul cuantizării statice FP16 asupra unui Vision Transformer
+pretrained. Spre deosebire de studiul preliminar (Faza~0), care a antrenat
+modelul pe CIFAR-10, această fază evaluează cuantizarea \emph{post-training}
+--- fără nicio re-antrenare --- pe setul de validare ImageNet-1k.
+
+\textbf{Obiective:}
+\begin{enumerate}
+  \item Stabilirea unui \textbf{baseline FP32} pe ImageNet-1k validation
+    (50\,000 imagini, 1\,000 clase).
+  \item Evaluarea conversiei \texttt{model.half()} (FP16 static) din punctul
+    de vedere al acurateții, latenței și memoriei.
+  \item Cuantificarea tradeoff-ului precizie--eficiență pentru FP16 pe un
+    model pretrained real.
+\end{enumerate}
+
+\textbf{Context:} Cuantizarea FP16 este cea mai simplă formă de reducere a
+preciziei numerice. Conversia \texttt{model.half()} transformă toate ponderile
+din \texttt{float32} (4 bytes/param) în \texttt{float16} (2 bytes/param),
+reducând teoretic memoria la \textbf{exact jumătate}. Pe hardware modern
+(GPU-uri NVIDIA cu Tensor Cores, Apple Silicon cu suport nativ float16),
+operațiile FP16 pot fi și mai rapide decât FP32.
+
+% ===========================================================================
+\section{Metodologie}
+% ===========================================================================
+
+\subsection{Model și date}
+
+\begin{table}[H]
+  \centering
+  \caption{Configurația experimentală}
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Parametru} & \textbf{Valoare} \\
+    \midrule
+    Model             & \texttt{vit\_tiny\_patch16\_224} (timm) \\
+    Parametri         & 5.7 milioane \\
+    Pretrained        & ImageNet-1k (\texttt{pretrained=True}) \\
+    Dataset evaluare  & ImageNet-1k validation (50\,000 imagini, 1\,000 clase) \\
+    Batch size        & 64 \\
+    Device            & Apple M4, backend MPS \\
+    PyTorch           & 2.9.1 \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:config_fp16}
+\end{table}
+
+\subsection{Preprocessing}
+
+Transformarea de intrare este cea specificată de modelul timm:
+
+\begin{itemize}
+  \item Resize + center crop la $224 \times 224$ (crop ratio = 0.9)
+  \item Interpolare bicubică
+  \item Normalizare: $\mu = (0.5, 0.5, 0.5)$, $\sigma = (0.5, 0.5, 0.5)$
+\end{itemize}
+
+\textbf{Notă:} \texttt{vit\_tiny\_patch16\_224} din timm nu folosește
+normalizarea standard ImageNet ($\mu = (0.485, 0.456, 0.406)$), ci
+$(0.5, 0.5, 0.5)$ --- acesta este un aspect important, deoarece utilizarea
+normalizării greșite ar degrada semnificativ acuratețea.
+
+\subsection{Protocol de evaluare}
+
+\begin{enumerate}
+  \item \textbf{FP32 baseline:} Modelul pretrained este încărcat și evaluat
+    direct în precizie \texttt{float32}.
+  \item \textbf{FP16:} Un al doilea model pretrained identic este convertit
+    cu \texttt{model.half()}, care transformă \emph{toate} ponderile și
+    buffer-urile la \texttt{float16}.
+  \item Ambele modele sunt evaluate pe aceleași 50\,000 de imagini,
+    cu aceleași transformări de intrare.
+  \item \textbf{Warmup:} Primele 3 batch-uri sunt excluse din măsurătorile
+    de latență, pentru a elimina overhead-ul de inițializare (compilare
+    kernele MPS, cache-uri).
+  \item \textbf{Sincronizare:} După fiecare batch se apelează
+    \texttt{torch.mps.synchronize()} pentru a asigura măsurători de latență
+    corecte (operațiile MPS sunt asincrone).
+\end{enumerate}
+
+\subsection{Metrici}
+
+\begin{itemize}
+  \item \textbf{Top-1 Accuracy (\%):} Procentul de imagini clasificate corect.
+  \item \textbf{Average Loss:} Cross-entropy loss mediu pe toate batch-urile.
+  \item \textbf{Latency (ms/batch):} Timp mediu de inferență per batch de 64
+    imagini, exclusiv warmup.
+  \item \textbf{Model Memory (MB):} Memoria ocupată de parametrii modelului,
+    calculată ca $\sum p.\text{numel()} \times p.\text{element\_size()}$.
+\end{itemize}
+
+% ===========================================================================
+\section{Rezultate}
+% ===========================================================================
+
+\subsection{Comparație globală}
+
+\begin{table}[H]
+  \centering
+  \caption{Rezultate FP32 vs.\ FP16 pe ImageNet-1k validation}
+  \begin{tabular}{lrrrr}
+    \toprule
+    \textbf{Format} & \textbf{Accuracy (\%)} & \textbf{Loss} &
+    \textbf{Latency (ms)} & \textbf{Memory (MB)} \\
+    \midrule
+    FP32 (baseline) & 75.456 & 0.9420 & 164.96 & 21.81 \\
+    FP16 (\texttt{model.half()}) & 75.452 & 0.9420 & 135.14 & 10.91 \\
+    \midrule
+    \textbf{Diferență} & $\mathbf{-0.004}$~pp & $<0.001$ &
+    $\mathbf{1.22\times}$ speedup & $\mathbf{2.00\times}$ reducere \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:fp16_results}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{../results/FP16ImageNet/plots/00_summary.png}
+  \caption{Overview Faza~1: acuratețe, memorie și latență --- FP32 vs.\ FP16.
+    Degradarea de acuratețe este invizibilă ($-0.004$~pp), reducerea de memorie
+    este exactă ($2.00\times$), iar speedup-ul pe MPS este de $1.22\times$.}
+  \label{fig:fp16_summary}
+\end{figure}
+
+\subsection{Acuratețe}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.7\textwidth]{../results/FP16ImageNet/plots/01_accuracy_comparison.png}
+  \caption{Comparație acuratețe Top-1: FP32 (75.456\%) vs.\ FP16 (75.452\%).
+    Diferența de $-0.004$~pp este sub pragul de variabilitate numerică și
+    confirmă că \texttt{model.half()} nu introduce degradare practică
+    a acurateții pe ImageNet-1k.}
+  \label{fig:fp16_accuracy}
+\end{figure}
+
+Degradarea de \textbf{$-0.004$~pp} este neglijabilă. Aceasta reprezintă
+o diferență de doar \textbf{2 imagini} din 50\,000 clasificate diferit.
+Loss-ul mediu este practic identic ($0.9420$ vs.\ $0.9420$), confirmând
+că distribuția softmax nu este alterată semnificativ de reducerea preciziei.
+
+\subsection{Memorie}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.7\textwidth]{../results/FP16ImageNet/plots/02_memory_comparison.png}
+  \caption{Footprint memorie parametri: FP32 (21.81~MB) vs.\ FP16 (10.91~MB).
+    Reducerea este exact $2.00\times$, conform teoriei (4~bytes/param $\to$
+    2~bytes/param).}
+  \label{fig:fp16_memory}
+\end{figure}
+
+Reducerea de memorie de $\mathbf{2.00\times}$ este \emph{exact} conformă cu
+teoria:
+\begin{equation}
+  \frac{21.81\text{ MB}}{10.91\text{ MB}} = 2.000\times
+  \qquad \text{(4 bytes/param} \to \text{2 bytes/param)}
+\end{equation}
+
+Pentru un model mai mare (e.g., ViT-Base cu 86M parametri), acest factor
+de $2\times$ ar traduce într-o economie de $\approx 330$~MB --- semnificativ
+pentru deployment pe dispozitive edge.
+
+\subsection{Latență}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.7\textwidth]{../results/FP16ImageNet/plots/03_latency_comparison.png}
+  \caption{Latență de inferență: FP32 (164.96~ms/batch) vs.\ FP16
+    (135.14~ms/batch). Speedup de $1.22\times$ pe Apple M4 MPS.}
+  \label{fig:fp16_latency}
+\end{figure}
+
+Speedup-ul de $\mathbf{1.22\times}$ este consistent cu arhitectura Apple M4:
+\begin{itemize}
+  \item Apple Silicon are suport nativ pentru operații \texttt{float16},
+    cu unități ALU dedicate.
+  \item Reducerea de bandwidth (jumătate din datele transferate între
+    memorie și compute) contribuie direct la speedup.
+  \item Speedup-ul sub $2\times$ este așteptat, deoarece nu toate operațiile
+    beneficiază de FP16 (softmax, layer norm pot rămâne în FP32 intern).
+\end{itemize}
+
+\subsection{Tradeoff acuratețe--latență}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.7\textwidth]{../results/FP16ImageNet/plots/04_accuracy_latency_tradeoff.png}
+  \caption{Scatter plot acuratețe vs.\ latență. FP16 se află în colțul
+    ideal (acuratețe menținută, latență redusă).}
+  \label{fig:fp16_tradeoff}
+\end{figure}
+
+Graficul de tradeoff confirmă că FP16 domină strict pe axa eficienței:
+acuratețea este practic identică, iar latența este redusă cu 30~ms/batch.
+Nu există niciun compromis practic pentru a adopta FP16 pe acest model.
+
+% ===========================================================================
+\section{Discuție}
+% ===========================================================================
+
+\subsection{Validarea ipotezei}
+
+Rezultatele confirmă ipoteza formulată în studiul preliminar (Faza~0):
+\textbf{ViT-Tiny este robust la reducerea preciziei de la FP32 la FP16.}
+Degradarea de $-0.004$~pp este cu un ordin de mărime mai mică decât
+variabilitatea inter-run tipică ($\approx 0.1$~pp).
+
+\subsection{Comparație cu studiul preliminar}
+
+\begin{table}[H]
+  \centering
+  \caption{Comparație: Faza~0 (CIFAR-10) vs.\ Faza~1 (ImageNet-1k)}
+  \begin{tabular}{lrr}
+    \toprule
+    \textbf{Metrică} & \textbf{Faza 0 (CIFAR-10)} & \textbf{Faza 1 (ImageNet-1k)} \\
+    \midrule
+    Accuracy FP32         & 82.88\% (fine-tuned)   & 75.456\% (pretrained)  \\
+    Degradare FP16        & $<0.5$~pp              & $-0.004$~pp            \\
+    Reducere memorie      & $2.00\times$           & $2.00\times$           \\
+    Dataset               & 10\,000 val images     & 50\,000 val images     \\
+    Clase                 & 10                     & 1\,000                 \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:fp16_vs_prelim}
+\end{table}
+
+Faza~1 confirmă pe un dataset mai complex (1\,000 clase, 50\,000 imagini)
+ceea ce Faza~0 a sugerat pe CIFAR-10: \textbf{conversia FP16 este sigură
+și fără compromisuri practice.}
+
+\subsection{Implicații pentru fazele ulterioare}
+
+Acuratețea FP32 de \textbf{75.456\%} devine baseline-ul de referință pentru
+toate fazele ulterioare:
+\begin{itemize}
+  \item Faza~2 va evalua cuantizarea INT8 (weight-only, per-tensor) față de
+    acest baseline.
+  \item Faza~3 va extinde la INT8 per-channel și va realiza analiza de
+    sensibilitate per strat.
+  \item Orice degradare $<1$~pp față de 75.456\% este considerată acceptabilă
+    pentru o reducere de memorie semnificativă.
+\end{itemize}
+
+\subsection{Limitări}
+
+\begin{enumerate}
+  \item \textbf{Hardware-specific:} Speedup-ul de $1.22\times$ este specific
+    Apple M4 MPS. Pe GPU-uri NVIDIA cu Tensor Cores, speedup-ul poate fi
+    semnificativ mai mare (până la $2$--$3\times$).
+  \item \textbf{Un singur model:} Experimentul evaluează doar ViT-Tiny.
+    Modele mai mari (ViT-Base, ViT-Large) ar putea beneficia mai mult
+    de reducerea de bandwidth.
+  \item \textbf{Batch size fix:} Batch-ul de 64 este limitat de memoria
+    disponibilă. Cu FP16, ar fi posibil un batch size mai mare, ceea ce
+    ar putea îmbunătăți throughput-ul total.
+  \item \textbf{Procese de fundal:} Măsurătorile de latență au fost
+    efectuate cu alte procese active (browser, Discord), ceea ce poate
+    introduce variabilitate. Totuși, raportul de speedup rămâne valid
+    deoarece ambele configurații au fost evaluate în aceleași condiții.
+\end{enumerate}
+
+% ===========================================================================
+\section{Concluzii}
+% ===========================================================================
+
+\begin{enumerate}
+  \item \textbf{Degradare neglijabilă:} FP16 introduce o pierdere de
+    acuratețe de doar $\mathbf{-0.004}$~pp (2 imagini din 50\,000),
+    practic invizibilă.
+
+  \item \textbf{Reducere de memorie exactă:} $\mathbf{2.00\times}$,
+    conform cu teoria ($\texttt{float32} \to \texttt{float16}$:
+    4~bytes $\to$ 2~bytes per parametru).
+
+  \item \textbf{Speedup pe Apple M4:} $\mathbf{1.22\times}$ reducere
+    a latenței de inferență, datorită suportului nativ float16 și
+    reducerii de bandwidth.
+
+  \item \textbf{Recomandare:} \texttt{model.half()} este o optimizare
+    \emph{fără cost} pentru ViT-Tiny pe ImageNet-1k --- poate fi aplicată
+    universal ca prim pas de optimizare, înaintea tehnicilor mai agresive
+    (INT8, pruning, distillation).
+
+  \item \textbf{Baseline stabilit:} Acuratețea FP32 de 75.456\% pe
+    ImageNet-1k validation devine referința pentru evaluarea cuantizării
+    INT8 în Faza~2.
+\end{enumerate}
+
+% ===========================================================================
+\begin{thebibliography}{9}
+% ===========================================================================
+
+\bibitem{dosovitskiy2021vit}
+A. Dosovitskiy, L. Beyer, A. Kolesnikov et al.,
+``An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale,''
+\emph{ICLR}, 2021. \href{https://arxiv.org/abs/2010.11929}{arXiv:2010.11929}.
+
+\bibitem{touvron2021deit}
+H. Touvron, M. Cord, M. Douze et al.,
+``Training data-efficient image transformers \& distillation through attention,''
+\emph{ICML}, 2021. \href{https://arxiv.org/abs/2012.12877}{arXiv:2012.12877}.
+
+\bibitem{jacob2018quantization}
+B. Jacob, S. Kligys, B. Chen et al.,
+``Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only Inference,''
+\emph{CVPR}, 2018. \href{https://arxiv.org/abs/1712.05877}{arXiv:1712.05877}.
+
+\bibitem{timm}
+R. Wightman, ``PyTorch Image Models (timm),'' 2019.
+\url{https://github.com/rwightman/pytorch-image-models}.
+
+\bibitem{imagenet}
+O. Russakovsky, J. Deng, H. Su et al.,
+``ImageNet Large Scale Visual Recognition Challenge,''
+\emph{IJCV}, vol.~115, no.~3, pp.~211--252, 2015.
+\href{https://arxiv.org/abs/1409.0575}{arXiv:1409.0575}.
+
+\end{thebibliography}
+
+\end{document}

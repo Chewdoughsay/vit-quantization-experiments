@@ -1,0 +1,562 @@
+% ===========================================================================
+%  Raport — Studiu Preliminar (Faza 0)
+%  Antrenare și Cuantizare FP8 pe ViT-Tiny / CIFAR-10
+%  Tudose Alexandru · Lucrare de Licență 2026
+% ===========================================================================
+\documentclass[12pt,a4paper]{article}
+
+% --- Encoding & fonts (XeTeX / tectonic) ---
+\usepackage{fontspec}
+\defaultfontfeatures{Ligatures=TeX}
+
+% --- Language ---
+\usepackage{polyglossia}
+\setmainlanguage{romanian}
+
+% --- Page geometry ---
+\usepackage[
+  top=2.5cm, bottom=2.5cm,
+  left=2.5cm, right=2.5cm
+]{geometry}
+
+% --- Math ---
+\usepackage{amsmath, amssymb}
+
+% --- Graphics ---
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\captionsetup{font=small, labelfont=bf}
+
+% --- Tables ---
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+
+% --- Colors ---
+\usepackage{xcolor}
+\definecolor{fp32color}{HTML}{0072B2}
+\definecolor{fp16color}{HTML}{009E73}
+\definecolor{fp8color}{HTML}{E69F00}
+\definecolor{lightgray}{HTML}{F4F4F4}
+
+% --- Hyperlinks ---
+\usepackage[
+  colorlinks=true,
+  linkcolor=fp32color,
+  citecolor=fp32color,
+  urlcolor=fp32color
+]{hyperref}
+
+% --- Misc ---
+\usepackage{microtype}
+\usepackage{parskip}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+\usepackage{enumitem}
+
+% --- Header / Footer ---
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\small Tudose Alexandru --- Studiu Preliminar (Faza 0)}
+\rhead{\small 2026}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ===========================================================================
+\begin{document}
+% ===========================================================================
+
+% --- Title page ---
+\begin{titlepage}
+  \centering
+  {\large Universitatea Transilvania din Brașov\\}
+  {\small Facultatea de Matematică și Informatică\\}
+  {\small Specializarea: Informatică Aplicată\\[2cm]}
+
+  \rule{\linewidth}{0.4pt}\\[0.5cm]
+  {\LARGE\bfseries Studiu Preliminar (Faza 0)\\[0.3cm]}
+  {\Large\bfseries Antrenare ViT-Tiny pe CIFAR-10\\[0.2cm]}
+  {\Large\bfseries Cuantizare FP16, FP8 E4M3FN\\[0.2cm]}
+  {\large Proof of Concept}\\[0.3cm]
+  \rule{\linewidth}{0.4pt}\\[2cm]
+
+  \begin{minipage}{0.45\textwidth}
+    \textbf{Student:}\\
+    Tudose Alexandru\\
+    Grupa 10LF333\\
+    An III, Informatică Aplicată
+  \end{minipage}
+  \hfill
+  \begin{minipage}{0.45\textwidth}
+    \raggedleft
+    \textbf{Coordonator:}\\
+    Conf.\ dr.\ ing.\ Honorius Gâlmeanu\\
+    Departamentul de Informatică
+  \end{minipage}\\[3cm]
+
+  {\small Brașov, 2026}
+\end{titlepage}
+
+% --- TOC ---
+\tableofcontents
+\newpage
+
+% ===========================================================================
+\section{Introducere}
+% ===========================================================================
+
+Acest raport documentează \textbf{studiul preliminar} (Faza~0) al lucrării de
+licență, care a servit drept \emph{proof of concept} pentru viabilitatea
+cuantizării numerice pe Vision Transformers. Experimentele au fost concepute
+pentru a valida pipeline-ul experimental și a demonstra fezabilitatea cuantizării
+înainte de trecerea la evaluarea pe ImageNet cu model pretrained.
+
+\textbf{Obiective:}
+\begin{enumerate}
+  \item Antrenarea unui ViT-Tiny pe CIFAR-10 cu diferite configurații de
+    precizie (FP32 vs.\ FP16) și augmentare (basic vs.\ extended).
+  \item Evaluarea impactului fiecărui factor asupra acurateții, generalizării
+    și timpului de antrenare.
+  \item Testarea cuantizării post-training FP8 (\texttt{float8\_e4m3fn}) pe
+    cel mai bun model antrenat.
+\end{enumerate}
+
+\textbf{Statut:} Studiul preliminar este \textbf{finalizat}. Concluziile sale
+au informat direcția fazelor ulterioare (1--3) ale lucrării. A fost identificat
+faptul că abordarea FP8 nativă (\texttt{torch.float8\_e4m3fn}) este
+problematică, ceea ce a condus la adoptarea cuantizării INT8 cu scalare liniară
+în fazele principale.
+
+\textbf{Notă:} Acest raport este inclus în lucrarea de licență ca \emph{studiu
+preliminar / test funcțional}. Rezultatele principale ale lucrării provin din
+Fazele 1--3 (evaluare pe ImageNet/ImageNette cu model pretrained).
+
+% ===========================================================================
+\section{Arhitectura Modelului și Dataset}
+% ===========================================================================
+
+\subsection{Vision Transformer --- ViT-Tiny}
+
+Modelul utilizat este \texttt{vit\_tiny\_patch16\_224} din biblioteca
+\texttt{timm}~\cite{timm}, cu 5.7 milioane de parametri.
+
+\begin{table}[H]
+  \centering
+  \caption{Parametrii arhitecturali ai ViT-Tiny}
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Proprietate} & \textbf{Valoare} \\
+    \midrule
+    Parametri totali    & 5.7 milioane \\
+    Patch size          & $16 \times 16$ pixeli \\
+    Input resolution    & $224 \times 224$ \\
+    Embedding dim       & 192 \\
+    Număr blocuri       & 12 \\
+    Număr capete (MHA)  & 3 \\
+    MLP ratio           & 4 (hidden dim = 768) \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:vit_config_prelim}
+\end{table}
+
+\subsection{CIFAR-10}
+
+CIFAR-10 conține 60\,000 imagini de $32 \times 32$ pixeli, distribuite în
+10 clase. Imaginile sunt redimensionate la $224 \times 224$ pentru
+compatibilitate cu ViT. Setul este împărțit în 50\,000 de imagini de antrenare
+și 10\,000 de imagini de validare.
+
+\textbf{Limitare:} CIFAR-10 este un dataset simplu și mic, insuficient pentru
+a trage concluzii despre comportamentul cuantizării pe sarcini complexe.
+Rezultatele au fost utilizate exclusiv ca validare a pipeline-ului experimental.
+
+% ===========================================================================
+\section{Design Experimental}
+% ===========================================================================
+
+\subsection{Matricea experimentelor}
+
+Au fost realizate 4 experimente combinând 2 factori:
+
+\begin{table}[H]
+  \centering
+  \caption{Matricea experimentelor $2 \times 2$}
+  \begin{tabular}{lcc}
+    \toprule
+    & \textbf{Basic augmentation} & \textbf{Extended augmentation} \\
+    \midrule
+    \textbf{FP32} & BaseFP32 & AugmFP32 \\
+    \textbf{FP16 (AMP)} & BaseFP16 & AugmFP16 \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:experiment_matrix}
+\end{table}
+
+\textbf{Augmentare basic:} Random horizontal flip + normalizare standard.
+
+\textbf{Augmentare extended:} Random crop, horizontal flip, color jitter,
+random erasing, CutMix/MixUp, label smoothing.
+
+\subsection{Configurație antrenare}
+
+\begin{table}[H]
+  \centering
+  \caption{Hiperparametri comuni}
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Parametru} & \textbf{Valoare} \\
+    \midrule
+    Epoci               & 50 \\
+    Batch size           & 64 \\
+    Optimizer            & AdamW \\
+    Learning rate        & $3 \times 10^{-4}$ \\
+    Scheduler            & Cosine annealing (warm restarts) \\
+    Pre-training         & ImageNet-1k (\texttt{pretrained=True}) \\
+    Fine-tuning dataset  & CIFAR-10 \\
+    Device               & Apple M4 MPS \\
+    PyTorch              & 2.9.1 \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:training_config}
+\end{table}
+
+\subsection{Hardware}
+
+Toate experimentele au fost executate pe MacBook Air cu Apple M4, 16~GB RAM,
+utilizând backend-ul MPS (Metal Performance Shaders) din PyTorch.
+
+% ===========================================================================
+\section{Rezultate Antrenare}
+% ===========================================================================
+
+\subsection{Comparație globală}
+
+\begin{table}[H]
+  \centering
+  \caption{Rezultate finale --- toate experimentele}
+  \begin{tabular}{lrrrrr}
+    \toprule
+    \textbf{Experiment} & \textbf{Best Val Acc} & \textbf{Final Train Acc} &
+    \textbf{Overfit Gap} & \textbf{Conv.\ Epoch} & \textbf{Timp (h)} \\
+    \midrule
+    BaseFP32 & 78.99\% & 97.29\% & 18.37 pp & 43 & 7.26 \\
+    BaseFP16 & 79.19\% & 97.43\% & 18.40 pp & 35 & 7.45 \\
+    AugmFP32 & 82.88\% & 86.80\% & \phantom{0}4.09 pp & 45 & 7.38 \\
+    AugmFP16 & \textbf{83.41\%} & 85.67\% & \textbf{\phantom{0}2.26 pp} & 48 & \textbf{7.09} \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:all_results}
+\end{table}
+
+\textit{Overfit Gap = Final Train Acc $-$ Final Val Acc. Conv.\ Epoch = prima
+epocă ce atinge 99.5\% din best val acc.}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{../results/preliminary/report_plots/A1_val_acc_all.png}
+  \caption{Curbele de acuratețe de validare pentru cele 4 experimente pe parcursul
+    a 50 de epoci. Configurațiile cu augmentare extinsă (Augm*) ating o acuratețe
+    semnificativ mai mare decât cele cu augmentare basic (Base*). Diferența între
+    FP32 și FP16 este neglijabilă la același tip de augmentare.}
+  \label{fig:val_acc_all}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{../results/preliminary/report_plots/A2_train_val_acc_grid.png}
+  \caption{Grid $2 \times 2$: acuratețe training vs.\ validare pentru fiecare
+    experiment. Zona umbrită reprezintă gap-ul de overfitting. Experimentele
+    Base* prezintă un gap masiv ($\approx 18$~pp), în timp ce Augm* reduc drastic
+    overfitting-ul la 2--4~pp.}
+  \label{fig:train_val_grid}
+\end{figure}
+
+\subsection{Efectul augmentării}
+
+Augmentarea extinsă este factorul dominant:
+
+\begin{itemize}
+  \item \textbf{FP32:} Basic $\to$ Extended: $+3.90$~pp acuratețe
+  \item \textbf{FP16:} Basic $\to$ Extended: $+4.21$~pp acuratețe
+  \item Overfitting gap redus de la $\approx 18.4$~pp la $\approx 2.3$--4.1~pp
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{../results/preliminary/report_plots/C1_best_val_acc_bar.png}
+    \caption{Acuratețe de validare maximă}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{../results/preliminary/report_plots/C2_overfitting_gap_bar.png}
+    \caption{Gap de overfitting}
+  \end{subfigure}
+  \caption{Comparație bar chart. (a) Augmentarea extinsă câștigă $\approx 4$~pp
+    acuratețe. (b) Overfitting-ul scade dramatic cu augmentare extinsă, de la
+    18.4~pp la 2.3~pp.}
+  \label{fig:acc_overfit_bars}
+\end{figure}
+
+\subsection{Efectul preciziei numerice}
+
+Diferența între FP32 și FP16 (AMP) este neglijabilă:
+\begin{itemize}
+  \item Cu augmentare basic: FP16 este marginal mai bun cu $+0.21$~pp
+  \item Cu augmentare extended: FP16 este mai bun cu $+0.52$~pp
+  \item Timpii de antrenare sunt comparabili ($\pm 3$\%)
+\end{itemize}
+
+\textbf{Concluzie:} Precizia numerică FP32 vs.\ FP16 nu are impact practic
+asupra acurateții pe CIFAR-10, confirmând robustețea ViT la reducerea preciziei.
+
+\subsection{Curbe de loss}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{../results/preliminary/report_plots/B_loss_curves.png}
+  \caption{Curbele de loss (training și validare) pentru toate experimentele.
+    Experimentele Base* converg la un loss de validare ridicat ($\approx 0.9$),
+    cu un gap mare față de training loss ($\approx 0.08$), indicând overfitting sever.
+    Experimentele Augm* mențin un gap mic între train și val loss.}
+  \label{fig:loss_curves}
+\end{figure}
+
+\subsection{Timing}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.65\textwidth]{../results/preliminary/report_plots/C3_training_time_bar.png}
+  \caption{Timpul total de antrenare. Toate experimentele durează
+    $\approx 7$--7.5~ore pe Apple M4 MPS. AugmFP16 este marginal cel mai rapid
+    (7.09~h), deoarece FP16 reduce overhead-ul per operație.}
+  \label{fig:training_time}
+\end{figure}
+
+\begin{table}[H]
+  \centering
+  \caption{Timing per epocă}
+  \begin{tabular}{lrr}
+    \toprule
+    \textbf{Experiment} & \textbf{Medie (sec)} & \textbf{Std (sec)} \\
+    \midrule
+    BaseFP32 & 522.90 & $\pm 16.45$ \\
+    BaseFP16 & 536.22 & $\pm 21.99$ \\
+    AugmFP32 & 531.33 & $\pm 27.68$ \\
+    AugmFP16 & 510.29 & $\pm 18.02$ \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:epoch_timing}
+\end{table}
+
+% ===========================================================================
+\section{Cuantizare Post-Training FP8}
+% ===========================================================================
+
+\subsection{Metodologie}
+
+Cel mai bun model antrenat (\textbf{AugmFP16}, acuratețe 83.41\%) a fost supus
+cuantizării post-training la \texttt{float8\_e4m3fn} la două granularități:
+
+\begin{enumerate}
+  \item \textbf{Per-tensor:} Un singur factor de scalare per matrice de ponderi.
+    \begin{equation}
+      s = \frac{\text{FP8\_MAX}}{\max(|W|)}, \quad
+      \hat{W} = \text{clamp}(W \cdot s,\, {-448},\, {448}).\text{to(fp8)}.\text{to(dtype)} / s
+    \end{equation}
+  \item \textbf{Per-channel:} Un factor de scalare per rând (dim~0) al matricii.
+\end{enumerate}
+
+\textbf{Notă importantă:} Această abordare (cast direct la \texttt{float8\_e4m3fn})
+a fost ulterior identificată drept \emph{problematică} de către coordonator,
+deoarece nu toate valorile FP32 sunt reprezentabile în formatul FP8. Fazele
+ulterioare (1--3) au adoptat cuantizarea INT8 cu scalare liniară, care
+garantează o mapare bijectivă la 256 valori discrete.
+
+\subsection{Rezultate}
+
+\begin{table}[H]
+  \centering
+  \caption{Rezultate cuantizare FP8 pe modelul AugmFP16}
+  \begin{tabular}{lrrr}
+    \toprule
+    \textbf{Metodă} & \textbf{Acuratețe} & \textbf{Degradare} & \textbf{Loss} \\
+    \midrule
+    FP16 (original)   & 83.43\% & ---         & 0.5572 \\
+    FP8 per-tensor    & 83.41\% & $+0.02$~pp  & 0.5581 \\
+    FP8 per-channel   & 83.42\% & $+0.01$~pp  & 0.5577 \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:fp8_results}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.75\textwidth]{../results/preliminary/report_plots/D_fp8_impact.png}
+  \caption{Impactul cuantizării FP8 asupra acurateții. Degradarea este
+    esențialmente zero ($<0.02$~pp), demonstrând viabilitatea cuantizării
+    pe 8 biți pe acest model și dataset.}
+  \label{fig:fp8_impact}
+\end{figure}
+
+\subsection{Discuție}
+
+Degradarea de $+0.02$~pp (per-tensor) și $+0.01$~pp (per-channel) este
+neglijabilă și se încadrează în variabilitatea numerică. Acest rezultat a
+confirmat ipoteza inițială: ViT-Tiny este robust la cuantizarea pe 8 biți.
+
+Totuși, aceste rezultate trebuie interpretate cu prudență:
+\begin{itemize}
+  \item CIFAR-10 este un dataset simplu --- degradarea pe sarcini mai complexe
+    poate fi semnificativ mai mare.
+  \item Metoda de cuantizare FP8 (\texttt{float8\_e4m3fn} direct) nu oferă
+    aceeași garanție de mapare bijectivă ca INT8 cu scalare liniară.
+  \item Toate ponderile au fost cuantizate, inclusiv LayerNorm și head ---
+    în fazele ulterioare, acestea sunt excluse.
+\end{itemize}
+
+% ===========================================================================
+\section{Monitorizare Hardware}
+% ===========================================================================
+
+\begin{table}[H]
+  \centering
+  \caption{Utilizare hardware în timpul antrenării}
+  \begin{tabular}{lrrrr}
+    \toprule
+    \textbf{Experiment} & \textbf{CPU Avg} & \textbf{CPU Max} &
+    \textbf{RAM Avg} & \textbf{RAM Max} \\
+    \midrule
+    BaseFP32 & 2.6\% & 54.3\% & 83.6\% & 89.3\% \\
+    BaseFP16 & 2.6\% & 58.9\% & 81.6\% & 86.4\% \\
+    AugmFP32 & 5.2\% & 59.1\% & 86.0\% & 90.8\% \\
+    AugmFP16 & 4.8\% & 62.6\% & 81.6\% & 86.8\% \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:hardware}
+\end{table}
+
+\textbf{Observații:}
+\begin{itemize}
+  \item CPU-ul este utilizat minimal ($<5\%$ medie), indicând o sarcină
+    GPU-bound pe MPS.
+  \item Augmentarea extinsă crește utilizarea CPU de $\approx 2\times$
+    (preprocessing suplimentar).
+  \item Memoria RAM este saturată ($81\text{--}91\%$), sugerând că batch-ul de 64
+    este aproape de limita celor 16~GB.
+  \item \textbf{Niciun experiment nu a declanșat thermal throttling.}
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{../results/preliminary/report_plots/E1_cpu_memory_bar.png}
+    \caption{CPU și RAM per experiment}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{../results/preliminary/report_plots/E2_gpu_power_profile.png}
+    \caption{Profilul de putere GPU/CPU}
+  \end{subfigure}
+  \caption{(a) Utilizare CPU și RAM medie/maximă. (b) Profilul de consum
+    energetic în timp pentru AugmFP32 vs.\ AugmFP16 --- profiluri similare,
+    confirmând că FP16 nu introduce overhead suplimentar pe Apple M4.}
+  \label{fig:hardware}
+\end{figure}
+
+% ===========================================================================
+\section{Limitări ale Studiului Preliminar}
+% ===========================================================================
+
+\begin{enumerate}
+  \item \textbf{Dataset:} CIFAR-10 este prea simplu și mic (60\,000 imagini,
+    10 clase) pentru a trage concluzii valide despre comportamentul cuantizării
+    pe sarcini reale. Rezultatele nu se generalizează direct la ImageNet.
+
+  \item \textbf{Metoda FP8:} Cast-ul direct la \texttt{float8\_e4m3fn} nu
+    garantează o mapare bijectivă --- anumite valori FP32 nu sunt reprezentabile
+    în FP8 E4M3FN. Fazele ulterioare adoptă INT8 cu scalare liniară.
+
+  \item \textbf{Cuantizare neselectivă:} Toate ponderile au fost cuantizate,
+    inclusiv LayerNorm și classification head, care sunt sensibile la erori
+    numerice. Abordarea corectă (Faza 2+) exclude aceste straturi.
+
+  \item \textbf{Fine-tuning, nu inferență pură:} Studiul preliminar antrenează
+    modelul pe CIFAR-10, deci evaluează cuantizarea \emph{după fine-tuning}.
+    Fazele principale evaluează cuantizarea pe un model pretrained
+    \emph{fără nicio re-antrenare} (post-training quantization).
+
+  \item \textbf{Hardware:} Experimentele pe M4 nu evaluează speedup-ul real
+    al cuantizării pe hardware cu suport nativ (NVIDIA Tensor Cores).
+\end{enumerate}
+
+% ===========================================================================
+\section{Concluzii și Lecții Învățate}
+% ===========================================================================
+
+\subsection{Concluzii}
+
+\begin{enumerate}
+  \item \textbf{Augmentarea domină:} Augmentarea extinsă produce un câștig de
+    $+3.9$--$4.2$~pp acuratețe, reducând overfitting-ul de la 18.4~pp la 2.3~pp.
+    Acesta este factorul cu cel mai mare impact asupra performanței.
+
+  \item \textbf{FP32 vs.\ FP16 --- diferență neglijabilă:} Precizia numerică
+    nu afectează semnificativ acuratețea ($\Delta < 0.5$~pp), confirmând
+    robustețea ViT la \texttt{float16}.
+
+  \item \textbf{Configurația optimă: AugmFP16} --- acuratețe 83.41\%,
+    overfitting gap 2.26~pp, timp minim (7.09~h).
+
+  \item \textbf{FP8 viabil ca proof of concept:} Degradarea $<0.02$~pp pe
+    CIFAR-10, dar metoda FP8 nativă prezintă limitări teoretice.
+\end{enumerate}
+
+\subsection{Lecții pentru fazele ulterioare}
+
+\begin{itemize}
+  \item Trecerea de la CIFAR-10 la \textbf{ImageNette2-320} (proxy ImageNet)
+    pentru evaluări mai relevante.
+  \item Adoptarea \textbf{INT8 cu scalare liniară} în locul FP8 nativ --- mapare
+    bijectivă garantată.
+  \item \textbf{Cuantizare selectivă:} excluderea LayerNorm, cls\_token,
+    pos\_embed și head.
+  \item Evaluare în regim \textbf{post-training quantization} (fără
+    re-antrenare), pe model pretrained.
+  \item Analiza \textbf{per-channel vs.\ per-tensor} și \textbf{sensitivity
+    analysis} per strat.
+\end{itemize}
+
+% ===========================================================================
+\begin{thebibliography}{9}
+% ===========================================================================
+
+\bibitem{dosovitskiy2021vit}
+A. Dosovitskiy, L. Beyer, A. Kolesnikov et al.,
+``An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale,''
+\emph{ICLR}, 2021. \href{https://arxiv.org/abs/2010.11929}{arXiv:2010.11929}.
+
+\bibitem{touvron2021deit}
+H. Touvron, M. Cord, M. Douze et al.,
+``Training data-efficient image transformers \& distillation through attention,''
+\emph{ICML}, 2021. \href{https://arxiv.org/abs/2012.12877}{arXiv:2012.12877}.
+
+\bibitem{micikevicius2022fp8}
+P. Micikevicius, D. Stosic, N. Burgess et al.,
+``FP8 Formats for Deep Learning,''
+2022. \href{https://arxiv.org/abs/2209.05433}{arXiv:2209.05433}.
+
+\bibitem{timm}
+R. Wightman, ``PyTorch Image Models (timm),'' 2019.
+\url{https://github.com/rwightman/pytorch-image-models}.
+
+\bibitem{cifar10}
+A. Krizhevsky, ``Learning Multiple Layers of Features from Tiny Images,''
+Technical Report, University of Toronto, 2009.
+
+\end{thebibliography}
+
+\end{document}

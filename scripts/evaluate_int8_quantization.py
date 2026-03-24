@@ -1,5 +1,5 @@
 """
-Phase 2 — INT8 weight-only quantization evaluation on ImageNette (ImageNet proxy).
+Phase 2 — INT8 weight-only quantization evaluation on ImageNet-1k validation.
 
 Selective quantization: only nn.Linear layers in Attention (qkv, proj) and
 MLP (fc1, fc2) are quantized with per-tensor linear scaling.  LayerNorm,
@@ -19,183 +19,44 @@ Usage:
 import argparse
 import json
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
 import timm.data
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-from torchvision import datasets
-from tqdm import tqdm
 
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.data.imagenet_loader import load_imagenet_val
+from src.evaluation.evaluator import evaluate, model_size_mb
 from src.models.vit_model import create_vit_model
 from src.models.quantized_linear import quantize_model_selective, SKIP_PATTERNS
 
-# ═══════════════════════════════════════════════════════════════════════════
-# ImageNette label mapping (shared with evaluate_fp16_imagenet.py)
-# ═══════════════════════════════════════════════════════════════════════════
-
-WNID_TO_IMAGENET = {
-    "n01440764": 0,    # tench
-    "n02102040": 217,  # English springer
-    "n02979186": 482,  # cassette player
-    "n03000684": 491,  # chain saw
-    "n03028079": 497,  # church
-    "n03394916": 566,  # French horn
-    "n03417042": 569,  # garbage truck
-    "n03425413": 571,  # gas pump
-    "n03445777": 574,  # golf ball
-    "n03888257": 701,  # parachute
-}
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Dataset
-# ═══════════════════════════════════════════════════════════════════════════
-
-def build_label_map(dataset: datasets.ImageFolder) -> list[int]:
-    mapping = [None] * len(dataset.classes)
-    for wnid, local_idx in dataset.class_to_idx.items():
-        mapping[local_idx] = WNID_TO_IMAGENET[wnid]
-    return mapping
-
-
-def get_val_loader(
-    dataset_dir: Path,
-    transform,
-    batch_size: int,
-    num_workers: int,
-) -> tuple[DataLoader, list[int]]:
-    val_dataset = datasets.ImageFolder(str(dataset_dir / "val"), transform=transform)
-    loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True,
-        persistent_workers=(num_workers > 0),
-    )
-    return loader, build_label_map(val_dataset)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Evaluation
-# ═══════════════════════════════════════════════════════════════════════════
-
-@torch.no_grad()
-def evaluate(
-    model: nn.Module,
-    loader: DataLoader,
-    label_map: list[int],
-    device: torch.device,
-    desc: str = "Eval",
-    warmup_batches: int = 3,
-) -> dict:
-    model.eval()
-    criterion   = nn.CrossEntropyLoss()
-    label_map_t = torch.tensor(label_map, dtype=torch.long, device=device)
-
-    total_correct = 0
-    total_samples = 0
-    total_loss    = 0.0
-    batch_times   = []
-
-    for batch_idx, (images, local_labels) in enumerate(tqdm(loader, desc=desc)):
-        images         = images.to(device)
-        imagenet_labels = label_map_t[local_labels.to(device)]
-
-        t0 = time.perf_counter()
-        outputs = model(images)
-        if device.type == "mps":
-            torch.mps.synchronize()
-        elif device.type == "cuda":
-            torch.cuda.synchronize()
-        t1 = time.perf_counter()
-
-        if batch_idx >= warmup_batches:
-            batch_times.append(t1 - t0)
-
-        loss = criterion(outputs.float(), imagenet_labels)
-        preds = outputs.argmax(dim=1)
-        total_correct += (preds == imagenet_labels).sum().item()
-        total_samples += imagenet_labels.size(0)
-        total_loss    += loss.item()
-
-    accuracy = total_correct / total_samples
-    avg_lat  = (sum(batch_times) / len(batch_times) * 1000) if batch_times else 0.0
-
-    return {
-        "accuracy":                    accuracy,
-        "accuracy_percent":            round(accuracy * 100, 4),
-        "avg_loss":                    round(total_loss / len(loader), 6),
-        "avg_latency_ms_per_batch":    round(avg_lat, 3),
-        "total_samples":               total_samples,
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Memory helpers
-# ═══════════════════════════════════════════════════════════════════════════
-
-def model_size_mb(model: nn.Module) -> float:
-    """Parameter + buffer memory in MB."""
-    total_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
-    total_bytes += sum(b.numel() * b.element_size() for b in model.buffers())
-    return total_bytes / (1024 ** 2)
-
-
-def count_linear_params(model: nn.Module) -> dict:
-    """Count parameters in quantizable vs skipped Linear layers."""
-    from src.models.quantized_linear import QuantizedLinear
-    q_params = sum(
-        m.weight_int8.numel()
-        for m in model.modules()
-        if isinstance(m, QuantizedLinear)
-    )
-    return {"quantized_weight_params": q_params}
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Main
-# ═══════════════════════════════════════════════════════════════════════════
 
 def main():
-    parser = argparse.ArgumentParser(description="INT8 static quantization on ImageNette")
-    parser.add_argument("--data-dir",    type=str, default="./data")
+    parser = argparse.ArgumentParser(description="INT8 static quantization on ImageNet-1k validation")
     parser.add_argument("--device",      type=str, default="mps", choices=["mps", "cuda", "cpu"])
     parser.add_argument("--batch-size",  type=int, default=64)
     parser.add_argument("--num-workers", type=int, default=2)
     args = parser.parse_args()
 
     print("\n" + "=" * 70)
-    print("INT8 Static Quantization (per-tensor)  —  ViT-Tiny on ImageNette")
+    print("INT8 Static Quantization (per-tensor)  —  ViT-Tiny on ImageNet-1k")
     print(f"PyTorch {torch.__version__}  |  device: {args.device}")
     print("=" * 70 + "\n")
 
-    data_dir = Path(args.data_dir)
-    device   = torch.device(args.device)
+    device = torch.device(args.device)
 
     # ------------------------------------------------------------------
     # Dataset
     # ------------------------------------------------------------------
-    dataset_dir = data_dir / "imagenette2-320"
-    if not dataset_dir.exists():
-        print(f"ERROR: ImageNette not found at {dataset_dir}.")
-        print("Run Phase 1 first: python scripts/evaluate_fp16_imagenet.py")
-        raise SystemExit(1)
-
-    # Use timm's own data config for correct preprocessing
     _tmp_model = create_vit_model("vit_tiny_patch16_224", num_classes=1000, pretrained=False)
     data_config   = timm.data.resolve_data_config({}, model=_tmp_model)
     val_transform = timm.data.create_transform(**data_config, is_training=False)
     del _tmp_model
 
-    loader, label_map = get_val_loader(dataset_dir, val_transform, args.batch_size, args.num_workers)
+    loader = load_imagenet_val(val_transform, args.batch_size, args.num_workers)
     print(f"Validation: {len(loader.dataset)} images  |  {len(loader)} batches  |  bs={args.batch_size}\n")
 
     # ------------------------------------------------------------------
@@ -210,7 +71,7 @@ def main():
     fp32_mem   = model_size_mb(model_fp32)
     print(f"Model size (FP32): {fp32_mem:.2f} MB\n")
 
-    fp32_results = evaluate(model_fp32, loader, label_map, device, desc="FP32")
+    fp32_results = evaluate(model_fp32, loader, device, desc="FP32")
     print(f"\n  Accuracy : {fp32_results['accuracy_percent']:.2f}%")
     print(f"  Loss     : {fp32_results['avg_loss']:.4f}")
     print(f"  Latency  : {fp32_results['avg_latency_ms_per_batch']:.2f} ms/batch\n")
@@ -234,7 +95,7 @@ def main():
     int8_mem = model_size_mb(model_int8)
     print(f"\nModel size (INT8): {int8_mem:.2f} MB  (reduction: {fp32_mem / int8_mem:.2f}x)\n")
 
-    int8_results = evaluate(model_int8, loader, label_map, device, desc="INT8")
+    int8_results = evaluate(model_int8, loader, device, desc="INT8")
     print(f"\n  Accuracy : {int8_results['accuracy_percent']:.2f}%")
     print(f"  Loss     : {int8_results['avg_loss']:.4f}")
     print(f"  Latency  : {int8_results['avg_latency_ms_per_batch']:.2f} ms/batch\n")
@@ -264,7 +125,7 @@ def main():
         "pytorch_version": torch.__version__,
         "model":           "vit_tiny_patch16_224",
         "pretrained":      True,
-        "dataset":         "imagenette2-320 (10-class ImageNet proxy)",
+        "dataset":         "ImageNet-1k validation (50000 images, 1000 classes)",
         "device":          args.device,
         "batch_size":      args.batch_size,
         "quantization": {

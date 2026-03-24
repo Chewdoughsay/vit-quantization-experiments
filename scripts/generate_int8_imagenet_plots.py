@@ -1,5 +1,5 @@
 """
-Phase 2 report plots — INT8 static quantization on ImageNette.
+Phase 2 report plots — INT8 static quantization on ImageNet-1k.
 
 Reads:
     results/INT8ImageNet/metrics/int8_imagenet_results.json
@@ -13,43 +13,19 @@ Usage:
 """
 
 import json
+import sys
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Global plot style (consistent with all report plots)
-# ═══════════════════════════════════════════════════════════════════════════
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
 
-plt.rcParams.update({
-    "font.family":       "DejaVu Serif",
-    "font.size":         12,
-    "axes.titlesize":    14,
-    "axes.titleweight":  "bold",
-    "axes.labelsize":    13,
-    "legend.fontsize":   11,
-    "xtick.labelsize":   10,
-    "ytick.labelsize":   10,
-    "figure.facecolor":  "white",
-    "axes.facecolor":    "#F8F8F8",
-    "axes.spines.top":   False,
-    "axes.spines.right": False,
-    "axes.grid":         True,
-    "grid.alpha":        0.4,
-    "grid.linestyle":    "--",
-})
+from src.utils.plot_style import apply_style, COLORS, save_fig
 
-SAVE_DPI = 300
-
-COLORS = {
-    "FP32": "#0072B2",
-    "FP16": "#009E73",
-    "INT8": "#E69F00",
-}
+apply_style()
 
 INT8_RESULTS_PATH = Path("results/INT8ImageNet/metrics/int8_imagenet_results.json")
 FP16_RESULTS_PATH = Path("results/FP16ImageNet/metrics/fp16_imagenet_results.json")
@@ -59,14 +35,6 @@ OUTPUT_DIR        = Path("results/INT8ImageNet/plots")
 def load(path: Path) -> dict:
     with open(path) as f:
         return json.load(f)
-
-
-def save(fig: plt.Figure, name: str) -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    path = OUTPUT_DIR / name
-    fig.savefig(path, dpi=SAVE_DPI, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  Saved: {path}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -80,7 +48,7 @@ def plot_summary(d: dict) -> None:
 
     fig, axes = plt.subplots(1, 3, figsize=(14, 5))
     fig.suptitle(
-        "INT8 Static Quantization (per-tensor) — ViT-Tiny on ImageNette\n"
+        "INT8 Static Quantization (per-tensor) — ViT-Tiny on ImageNet-1k\n"
         "(weight-only, linear scaling, Apple M4 MPS)",
         fontsize=14, fontweight="bold", y=1.02,
     )
@@ -131,7 +99,7 @@ def plot_summary(d: dict) -> None:
             color=COLORS["INT8"], fontsize=10, fontweight="bold")
 
     fig.tight_layout()
-    save(fig, "00_summary.png")
+    save_fig(fig, OUTPUT_DIR, "00_summary.png")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -143,7 +111,6 @@ def plot_per_layer_mse(d: dict) -> None:
     names  = [s["layer"] for s in stats]
     mse    = [s["mse"]   for s in stats]
 
-    # Short labels: "b7.mlp.fc1" instead of "blocks.7.mlp.fc1"
     short_names = []
     for n in names:
         n = n.replace("blocks.", "b").replace(".attn.", ".attn.").replace(".mlp.", ".mlp.")
@@ -166,14 +133,13 @@ def plot_per_layer_mse(d: dict) -> None:
     ax.yaxis.set_major_formatter(ticker.ScalarFormatter(useMathText=True))
     ax.ticklabel_format(style="sci", axis="y", scilimits=(0, 0))
 
-    # Mean line
     avg_mse = np.mean(mse)
     ax.axhline(avg_mse, color="gray", linestyle="--", linewidth=1.2,
                label=f"Mean = {avg_mse:.2e}")
     ax.legend()
 
     fig.tight_layout()
-    save(fig, "01_per_layer_mse.png")
+    save_fig(fig, OUTPUT_DIR, "01_per_layer_mse.png")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -184,7 +150,6 @@ def plot_per_layer_scale(d: dict) -> None:
     stats  = d["layer_stats"]
     scales = [s["scale"] for s in stats]
 
-    # Group by layer type
     groups = {"attn.qkv": [], "attn.proj": [], "mlp.fc1": [], "mlp.fc2": []}
     for s in stats:
         for key in groups:
@@ -222,7 +187,7 @@ def plot_per_layer_scale(d: dict) -> None:
     ax.set_title("Scale per layer type")
 
     fig.tight_layout()
-    save(fig, "02_per_layer_scale.png")
+    save_fig(fig, OUTPUT_DIR, "02_per_layer_scale.png")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -251,7 +216,7 @@ def plot_cross_phase(d_int8: dict, d_fp16: dict) -> None:
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     fig.suptitle(
-        "Comparison FP32 / FP16 / INT8 — ViT-Tiny on ImageNette\n"
+        "Comparison FP32 / FP16 / INT8 — ViT-Tiny on ImageNet-1k\n"
         "(FP16 = model.half()  |  INT8 = per-tensor weight-only)",
         fontsize=13, fontweight="bold", y=1.02,
     )
@@ -287,7 +252,7 @@ def plot_cross_phase(d_int8: dict, d_fp16: dict) -> None:
     ax.set_ylim(0, 185)
 
     fig.tight_layout()
-    save(fig, "03_cross_phase_comparison.png")
+    save_fig(fig, OUTPUT_DIR, "03_cross_phase_comparison.png")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -335,7 +300,7 @@ def plot_tradeoff(d_int8: dict, d_fp16: dict) -> None:
     ax.legend()
 
     fig.tight_layout()
-    save(fig, "04_tradeoff.png")
+    save_fig(fig, OUTPUT_DIR, "04_tradeoff.png")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -350,7 +315,7 @@ def write_markdown(d: dict) -> None:
     spd   = comp["latency_speedup"]
 
     lines = [
-        "# Faza 2 — INT8 Static Quantization pe ImageNette",
+        "# Faza 2 — INT8 Static Quantization on ImageNet-1k",
         "",
         f"**Data:** {d['timestamp']}  |  "
         f"**Model:** `{d['model']}`  |  "

@@ -1,8 +1,6 @@
 """
-src.data — CIFAR-10 data loaders.  **Legacy** (preliminary study only).
+src.data — Data loaders.
 
-This package is used exclusively by scripts/preliminary/train.py for the
-initial CIFAR-10 fine-tuning experiments.  The main quantization evaluation
-pipeline (Phases 1-3) downloads ImageNette directly and does not use this
-module.
+- ``dataset.py``          — CIFAR-10 loaders (legacy, preliminary study only).
+- ``imagenet_loader.py``  — ImageNet-1k validation loader (Phases 1-3).
 """

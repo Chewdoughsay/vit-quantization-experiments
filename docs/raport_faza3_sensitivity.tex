@@ -1,0 +1,589 @@
+% ===========================================================================
+%  Raport — Faza 3: Analiză de Sensibilitate și Comparații Sistematice
+%  ViT-Tiny pretrained pe ImageNet-1k validation
+%  Tudose Alexandru · Lucrare de Licență 2026
+% ===========================================================================
+\documentclass[12pt,a4paper]{article}
+
+% --- Encoding & fonts (XeTeX / tectonic) ---
+\usepackage{fontspec}
+\defaultfontfeatures{Ligatures=TeX}
+
+% --- Language ---
+\usepackage{polyglossia}
+\setmainlanguage{romanian}
+
+% --- Page geometry ---
+\usepackage[
+  top=2.5cm, bottom=2.5cm,
+  left=2.5cm, right=2.5cm
+]{geometry}
+
+% --- Math ---
+\usepackage{amsmath, amssymb}
+
+% --- Graphics ---
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\captionsetup{font=small, labelfont=bf}
+
+% --- Tables ---
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+
+% --- Colors ---
+\usepackage{xcolor}
+\definecolor{fp32color}{HTML}{0072B2}
+\definecolor{fp16color}{HTML}{009E73}
+\definecolor{int8ptcolor}{HTML}{E69F00}
+\definecolor{int8pccolor}{HTML}{D55E00}
+\definecolor{lightgray}{HTML}{F4F4F4}
+
+% --- Hyperlinks ---
+\usepackage[
+  colorlinks=true,
+  linkcolor=fp32color,
+  citecolor=fp32color,
+  urlcolor=fp32color
+]{hyperref}
+
+% --- Misc ---
+\usepackage{microtype}
+\usepackage{parskip}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+\usepackage{enumitem}
+
+% --- Header / Footer ---
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\small Tudose Alexandru --- Faza 3: Sensitivity Analysis}
+\rhead{\small 2026}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ===========================================================================
+\begin{document}
+% ===========================================================================
+
+% --- Title page ---
+\begin{titlepage}
+  \centering
+  {\large Universitatea Transilvania din Brașov\\}
+  {\small Facultatea de Matematică și Informatică\\}
+  {\small Specializarea: Informatică Aplicată\\[2cm]}
+
+  \rule{\linewidth}{0.4pt}\\[0.5cm]
+  {\LARGE\bfseries Faza 3: Analiză de Sensibilitate\\[0.3cm]}
+  {\Large\bfseries și Comparații Sistematice\\[0.2cm]}
+  {\Large\bfseries ViT-Tiny pe ImageNet-1k validation\\[0.2cm]}
+  {\large Per-Tensor vs.\ Per-Channel · Sensitivity per Layer}\\[0.3cm]
+  \rule{\linewidth}{0.4pt}\\[2cm]
+
+  \begin{minipage}{0.45\textwidth}
+    \textbf{Student:}\\
+    Tudose Alexandru\\
+    Grupa 10LF333\\
+    An III, Informatică Aplicată
+  \end{minipage}
+  \hfill
+  \begin{minipage}{0.45\textwidth}
+    \raggedleft
+    \textbf{Coordonator:}\\
+    Conf.\ dr.\ ing.\ Honorius Gâlmeanu\\
+    Departamentul de Informatică
+  \end{minipage}\\[3cm]
+
+  {\small Brașov, 2026}
+\end{titlepage}
+
+% --- TOC ---
+\tableofcontents
+\newpage
+
+% ===========================================================================
+\section{Introducere}
+% ===========================================================================
+
+Acest raport documentează \textbf{Faza~3} --- cea mai extinsă fază
+experimentală a lucrării de licență. Faza~3 abordează trei întrebări
+lăsate deschise de fazele anterioare:
+
+\begin{enumerate}
+  \item \textbf{Per-tensor vs.\ per-channel:} Cât de mult îmbunătățește
+    cuantizarea per-channel eroarea de reconstrucție și acuratețea față
+    de per-tensor?
+  \item \textbf{Sensibilitate per strat:} Care straturi individuale sunt
+    cele mai sensibile la cuantizare? (Analiza cu un singur strat cuantizat
+    la un moment dat.)
+  \item \textbf{Profilare completă:} Care este profilul real de latență,
+    memorie RAM și dimensiune pe disk pentru toate cele 4 formate
+    (FP32, FP16, INT8-pt, INT8-pc)?
+\end{enumerate}
+
+\textbf{Amploare:} Faza~3 include 56 evaluări complete pe cele 50\,000 de
+imagini ImageNet-1k validation (4 globale + 48 sensitivity + 4 timing),
+cu un timp total de execuție de $\approx 2.5$~ore pe Apple M4.
+
+% ===========================================================================
+\section{Metodologie}
+% ===========================================================================
+
+\subsection{Experimente realizate}
+
+\begin{table}[H]
+  \centering
+  \caption{Cele 5 experimente din Faza~3}
+  \begin{tabular}{clr}
+    \toprule
+    \textbf{Nr.} & \textbf{Experiment} & \textbf{Evaluări} \\
+    \midrule
+    1 & Acuratețe globală: FP32, FP16, INT8-pt, INT8-pc & 4 \\
+    2 & Eroare cuantizare per strat (MSE pt vs.\ pc) & 0 (analitic) \\
+    3 & Sensitivity analysis (un strat cuantizat individual) & 48 \\
+    4 & Timing \& memory profiling & 4 \\
+    5 & Disk footprint (serializare \texttt{torch.save}) & 4 \\
+    \midrule
+    & \textbf{Total evaluări pe 50\,000 imagini} & \textbf{56} \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:experiments}
+\end{table}
+
+\subsection{Per-tensor vs.\ per-channel}
+
+Cuantizarea \textbf{per-tensor} (Faza~2) utilizează un singur factor de
+scalare per matrice de ponderi:
+\begin{equation}
+  s = \frac{\max(|W|)}{127}, \qquad
+  q_{ij} = \text{round}\!\left(\frac{W_{ij}}{s}\right).\text{clamp}(-128, 127)
+\end{equation}
+
+Cuantizarea \textbf{per-channel} introduce un factor de scalare per rând
+(canal de ieșire):
+\begin{equation}
+  s_i = \frac{\max(|W_{i,:}|)}{127}, \qquad
+  q_{ij} = \text{round}\!\left(\frac{W_{ij}}{s_i}\right).\text{clamp}(-128, 127)
+\end{equation}
+
+Per-channel permite fiecărui canal să se adapteze la propriul dinamic de
+ponderi, reducând dramatic eroarea pentru straturile cu distribuții
+non-uniforme (e.g., outlierii din block~7 identificați în Faza~2).
+
+\subsection{Sensitivity analysis}
+
+Pentru fiecare din cele 48 de straturi cuantizabile:
+\begin{enumerate}
+  \item Se pornește de la modelul FP32 complet.
+  \item Se cuantizează \emph{doar} stratul respectiv (per-tensor INT8).
+  \item Se evaluează acuratețea pe cele 50\,000 de imagini.
+  \item Se restaurează stratul original.
+\end{enumerate}
+
+Aceasta izolează impactul fiecărui strat individual, fără interferența
+cauzată de cuantizarea celorlalte straturi.
+
+\subsection{Configurație}
+
+Identică cu Fazele~1--2: \texttt{vit\_tiny\_patch16\_224}, pretrained
+ImageNet-1k, batch size 64, Apple M4 MPS, PyTorch 2.9.1.
+
+% ===========================================================================
+\section{Rezultate: Comparație Globală}
+% ===========================================================================
+
+\subsection{Acuratețe și degradare}
+
+\begin{table}[H]
+  \centering
+  \caption{Acuratețe globală --- toate cele 4 formate}
+  \begin{tabular}{lrrrr}
+    \toprule
+    \textbf{Format} & \textbf{Accuracy (\%)} & \textbf{$\Delta$ vs FP32} &
+    \textbf{Loss} \\
+    \midrule
+    FP32 (baseline)    & 75.456 & ---            & 0.9420 \\
+    FP16               & 75.452 & $-0.004$~pp    & 0.9420 \\
+    INT8 per-tensor    & 75.134 & $-0.322$~pp    & 0.9563 \\
+    INT8 per-channel   & 75.424 & $-0.032$~pp    & 0.9428 \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:global_accuracy}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{../results/Phase3/plots/00_global_comparison.png}
+  \caption{Comparație globală: acuratețe absolută (stânga) și degradare față
+    de FP32 (dreapta). INT8 per-channel recuperează aproape complet degradarea
+    per-tensor: de la $-0.322$~pp la doar $-0.032$~pp.}
+  \label{fig:global_comparison}
+\end{figure}
+
+\textbf{Rezultat cheie:} INT8 per-channel reduce degradarea cu un factor
+de $\mathbf{10\times}$ față de per-tensor ($0.032$~pp vs.\ $0.322$~pp),
+atingând o acuratețe aproape identică cu FP32.
+
+\subsection{Timing și memorie}
+
+\begin{table}[H]
+  \centering
+  \caption{Profilare completă: latență, memorie RAM, dimensiune pe disk}
+  \begin{tabular}{lrrrrr}
+    \toprule
+    \textbf{Format} & \textbf{Latency (ms)} & \textbf{$\pm$ Std} &
+    \textbf{RAM (MB)} & \textbf{Disk (MB)} \\
+    \midrule
+    FP32       & 200.1 & $\pm 10.5$ & 21.81 & 21.87 \\
+    FP16       & 146.4 & $\pm\phantom{0}6.9$ & 10.91 & 10.96 \\
+    INT8-pt    & 200.4 & $\pm\phantom{0}8.9$ & \phantom{0}6.62 & \phantom{0}6.68 \\
+    INT8-pc    & 199.0 & $\pm\phantom{0}7.6$ & \phantom{0}6.70 & \phantom{0}6.77 \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:timing_memory}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{../results/Phase3/plots/03_timing_memory.png}
+  \caption{Profilare completă: latență cu error bars (stânga), memorie RAM
+    (centru), dimensiune pe disk (dreapta). FP16 este singurul format cu
+    speedup real. INT8-pt și INT8-pc au latență similară cu FP32, dar
+    memorie de $\approx 3.3\times$ mai mică.}
+  \label{fig:timing_memory}
+\end{figure}
+
+\textbf{Observații:}
+\begin{itemize}
+  \item \textbf{FP16 este cel mai rapid} ($146.4$~ms, speedup $1.37\times$
+    față de FP32) --- singura metodă care reduce efectiv latența.
+  \item \textbf{INT8-pt și INT8-pc} au latență similară cu FP32
+    ($\approx 200$~ms) --- dequantizarea anulează orice beneficiu.
+  \item \textbf{INT8 per-channel} are doar $+0.08$~MB overhead față de
+    per-tensor (48 vectori de scale vs.\ 48 scalari) --- neglijabil.
+  \item Dimensiunea pe disk urmează aceleași proporții ca memoria RAM.
+\end{itemize}
+
+% ===========================================================================
+\section{Rezultate: Per-Tensor vs.\ Per-Channel}
+% ===========================================================================
+
+\subsection{Eroare de cuantizare per strat}
+
+\begin{table}[H]
+  \centering
+  \caption{MSE mediu per-tensor vs.\ per-channel}
+  \begin{tabular}{lrr}
+    \toprule
+    \textbf{Metrică} & \textbf{Per-tensor} & \textbf{Per-channel} \\
+    \midrule
+    MSE mediu         & $2.88 \times 10^{-6}$ & $2.30 \times 10^{-7}$ \\
+    Îmbunătățire medie & \multicolumn{2}{c}{$\mathbf{11.14\times}$} \\
+    Îmbunătățire maximă & \multicolumn{2}{c}{$179.38\times$ (\texttt{blocks.7.mlp.fc1})} \\
+    Îmbunătățire minimă & \multicolumn{2}{c}{$2.04\times$ (\texttt{blocks.8.attn.proj})} \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:mse_comparison}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{../results/Phase3/plots/02_mse_per_tensor_vs_per_channel.png}
+  \caption{(Sus) MSE per strat: per-tensor (portocaliu) vs.\ per-channel
+    (roșu). Per-channel reduce dramatic MSE-ul pentru toate straturile,
+    mai ales pentru outlierii din block~7. (Jos) Factorul de îmbunătățire
+    per strat --- outlierii beneficiază cel mai mult ($>100\times$).}
+  \label{fig:mse_pt_vs_pc}
+\end{figure}
+
+\textbf{Interpretare:} Per-channel reduce MSE-ul cu un ordin de mărime
+în medie ($11.14\times$). Efectul este dramatic pentru straturile cu
+distribuții non-uniforme ale ponderilor:
+
+\begin{itemize}
+  \item \texttt{blocks.7.mlp.fc1}: îmbunătățire de $\mathbf{179.38\times}$
+    --- per-tensor MSE era $3.32 \times 10^{-5}$, per-channel scade la
+    $1.85 \times 10^{-7}$.
+  \item Straturile cu distribuții uniforme (e.g., \texttt{blocks.8.attn.proj})
+    beneficiază mai puțin ($2.04\times$), deoarece per-tensor era deja
+    suficient de precis.
+\end{itemize}
+
+\subsection{Impactul asupra acurateții globale}
+
+\begin{table}[H]
+  \centering
+  \caption{Acuratețe: per-tensor vs.\ per-channel}
+  \begin{tabular}{lrrr}
+    \toprule
+    \textbf{Granularitate} & \textbf{Accuracy} & \textbf{Degradare} &
+    \textbf{Recuperare} \\
+    \midrule
+    FP32 (referință) & 75.456\% & --- & --- \\
+    INT8 per-tensor  & 75.134\% & $-0.322$~pp & --- \\
+    INT8 per-channel & 75.424\% & $-0.032$~pp & $\mathbf{90\%}$ din degradare \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:pt_vs_pc_accuracy}
+\end{table}
+
+Per-channel recuperează \textbf{90\%} din degradarea introdusă de
+per-tensor, reducând-o de la $-0.322$~pp la doar $-0.032$~pp. Aceasta
+confirmă că outlierii din block~7 (identificați în Faza~2) erau principala
+sursă de degradare, iar per-channel rezolvă exact această problemă.
+
+% ===========================================================================
+\section{Rezultate: Sensitivity Analysis}
+% ===========================================================================
+
+\subsection{Degradare per strat}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{../results/Phase3/plots/01_sensitivity_ranked.png}
+  \caption{Sensitivity analysis: degradare de acuratețe per strat (sortat
+    descrescător). Fiecare bară reprezintă impactul cuantizării INT8 per-tensor
+    a unui singur strat. Straturile din top 25\% sensibilitate sunt marcate
+    cu portocaliu.}
+  \label{fig:sensitivity_ranked}
+\end{figure}
+
+\subsection{Top 5 cele mai sensibile straturi}
+
+\begin{table}[H]
+  \centering
+  \caption{Cele mai sensibile 5 straturi la cuantizare individuală}
+  \begin{tabular}{lrrr}
+    \toprule
+    \textbf{Strat} & \textbf{Accuracy} & \textbf{Degradare} &
+    \textbf{Tip} \\
+    \midrule
+    \texttt{blocks.7.mlp.fc1}   & 75.364\% & $-0.092$~pp & MLP \\
+    \texttt{blocks.1.mlp.fc1}   & 75.402\% & $-0.054$~pp & MLP \\
+    \texttt{blocks.0.mlp.fc1}   & 75.422\% & $-0.034$~pp & MLP \\
+    \texttt{blocks.7.mlp.fc2}   & 75.426\% & $-0.030$~pp & MLP \\
+    \texttt{blocks.10.mlp.fc2}  & 75.428\% & $-0.028$~pp & MLP \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:top5_sensitive}
+\end{table}
+
+\textbf{Observație:} Toate cele 5 straturi cele mai sensibile sunt
+\texttt{mlp.fc1} sau \texttt{mlp.fc2} --- \emph{niciun strat de atenție}
+nu apare în top. Aceasta sugerează că straturile MLP sunt fundamental mai
+sensibile la cuantizare decât straturile de atenție.
+
+\subsection{Top 5 cele mai robuste straturi}
+
+\begin{table}[H]
+  \centering
+  \caption{Cele mai robuste 5 straturi --- degradare negativă (acuratețe
+    ușor \emph{mai mare} după cuantizare)}
+  \begin{tabular}{lrrr}
+    \toprule
+    \textbf{Strat} & \textbf{Accuracy} & \textbf{$\Delta$} &
+    \textbf{Tip} \\
+    \midrule
+    \texttt{blocks.2.mlp.fc1}    & 75.492\% & $+0.036$~pp & MLP \\
+    \texttt{blocks.0.attn.proj}  & 75.492\% & $+0.036$~pp & Attention \\
+    \texttt{blocks.11.mlp.fc1}   & 75.484\% & $+0.028$~pp & MLP \\
+    \texttt{blocks.7.attn.proj}  & 75.480\% & $+0.024$~pp & Attention \\
+    \texttt{blocks.1.mlp.fc2}    & 75.478\% & $+0.022$~pp & MLP \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:top5_robust}
+\end{table}
+
+Unele straturi prezintă o acuratețe ușor \emph{mai mare} după cuantizare.
+Aceasta este un efect de \textbf{regularizare}: eroarea de cuantizare
+introduce un zgomot mic care, pentru anumite straturi, acționează ca
+un regularizator implicit, similar cu dropout sau weight noise.
+
+\subsection{Heatmap structural}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{../results/Phase3/plots/04_sensitivity_heatmap.png}
+  \caption{Heatmap de sensibilitate: 12 blocuri $\times$ 4 tipuri de strat.
+    Culoarea indică degradarea de acuratețe. Blocurile timpurii (0--2) și
+    block~7 sunt cele mai sensibile, în special straturile \texttt{mlp.fc1}.}
+  \label{fig:sensitivity_heatmap}
+\end{figure}
+
+Heatmap-ul relevă un pattern structural clar:
+\begin{itemize}
+  \item \textbf{Straturile MLP (\texttt{fc1})} sunt consistent mai
+    sensibile decât \texttt{fc2} și decât straturile de atenție.
+  \item \textbf{Blocurile timpurii (0--2)} sunt mai sensibile decât
+    blocurile din mijloc (3--6), probabil pentru că procesează
+    feature-urile de nivel scăzut care sunt critice pentru clasificare.
+  \item \textbf{Block~7} este outlier din cauza distribuției non-uniforme
+    a ponderilor (confirmat de MSE-ul ridicat din Faza~2).
+  \item \textbf{Straturile de atenție (\texttt{attn.qkv}, \texttt{attn.proj})}
+    sunt cele mai robuste --- mecanismul de atenție pare inherent tolerant
+    la cuantizare.
+\end{itemize}
+
+% ===========================================================================
+\section{Discuție}
+% ===========================================================================
+
+\subsection{Sinteza celor trei faze}
+
+\begin{table}[H]
+  \centering
+  \caption{Sinteza completă: Faza 1 + Faza 2 + Faza 3}
+  \begin{tabular}{lrrrrr}
+    \toprule
+    \textbf{Format} & \textbf{Acc.\ (\%)} & \textbf{$\Delta$} &
+    \textbf{Mem (MB)} & \textbf{Disk (MB)} & \textbf{Lat.\ (ms)} \\
+    \midrule
+    FP32       & 75.456 & ---           & 21.81 & 21.87 & 200.1 \\
+    FP16       & 75.452 & $-0.004$~pp   & 10.91 & 10.96 & 146.4 \\
+    INT8-pt    & 75.134 & $-0.322$~pp   & \phantom{0}6.62 & \phantom{0}6.68 & 200.4 \\
+    INT8-pc    & 75.424 & $-0.032$~pp   & \phantom{0}6.70 & \phantom{0}6.77 & 199.0 \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:full_synthesis}
+\end{table}
+
+\subsection{Recomandări practice}
+
+Pe baza tuturor rezultatelor din Fazele~1--3:
+
+\begin{enumerate}
+  \item \textbf{Pentru deployment general:} FP16 (\texttt{model.half()}) este
+    recomandarea implicită --- zero degradare, $2\times$ memorie, $1.37\times$
+    speedup. Nu există niciun motiv practic de a nu-l adopta.
+
+  \item \textbf{Pentru constrângeri de memorie:} INT8 per-channel oferă
+    $3.26\times$ reducere cu doar $-0.032$~pp degradare --- cel mai bun
+    raport eficiență/acuratețe.
+
+  \item \textbf{De evitat:} INT8 per-tensor pe modele cu outlieri
+    (e.g., block~7 la ViT-Tiny). Per-channel rezolvă exact această
+    problemă cu overhead neglijabil.
+
+  \item \textbf{Pentru mixed-precision viitoare:} Straturile identificate
+    ca foarte sensibile (\texttt{blocks.7.mlp.fc1}) ar putea fi păstrate
+    în FP16 sau FP32, în timp ce restul modelului este cuantizat la INT8.
+\end{enumerate}
+
+\subsection{Limitări}
+
+\begin{enumerate}
+  \item \textbf{Sensitivity analysis izolată:} Fiecare strat este cuantizat
+    individual. Interacțiunile între straturi cuantizate simultan nu sunt
+    capturate (efectul cumulativ poate fi non-liniar).
+
+  \item \textbf{Weight-only:} Activările rămân în FP32. Cuantizarea
+    completă (ponderi + activări) ar putea prezenta pattern-uri diferite
+    de sensibilitate.
+
+  \item \textbf{Un singur model:} Doar ViT-Tiny (5.7M parametri) a fost
+    evaluat. Modele mai mari pot avea distribuții de ponderi diferite și
+    straturi outlier în alte locuri.
+
+  \item \textbf{Hardware-specific:} Latența pe Apple M4 MPS nu include
+    kernele INT8 native (indisponibile). Pe hardware cu suport INT8
+    (NVIDIA, Intel AMX), profilul de latență ar fi fundamental diferit.
+
+  \item \textbf{Variabilitate a latenței:} Măsurătorile au fost efectuate
+    cu alte procese active, ceea ce explică std-ul de $7\text{--}11$~ms.
+    Rapoartele relative rămân valide.
+\end{enumerate}
+
+\subsection{Direcții viitoare}
+
+\begin{itemize}
+  \item \textbf{Mixed-precision quantization:} Cuantizare selectivă
+    bazată pe sensibilitate --- straturile din top~25\% rămân în precizie
+    mai mare.
+  \item \textbf{Cuantizare activări:} Extinderea la cuantizarea completă
+    (ponderi + activări) cu calibrare pe un subset de date.
+  \item \textbf{Modele mai mari:} Evaluare pe ViT-Small (22M) sau
+    ViT-Base (86M) pentru a verifica scalabilitatea concluziilor.
+  \item \textbf{Quantization-Aware Training (QAT):} Fine-tuning cu
+    cuantizare simulată pentru a recupera degradarea reziduală.
+\end{itemize}
+
+% ===========================================================================
+\section{Concluzii}
+% ===========================================================================
+
+\begin{enumerate}
+  \item \textbf{Per-channel recuperează 90\% din degradare:}
+    INT8 per-channel atinge $\mathbf{75.424\%}$ (doar $-0.032$~pp față de
+    FP32), comparativ cu $75.134\%$ ($-0.322$~pp) pentru per-tensor.
+    Îmbunătățirea medie a MSE-ului este de $\mathbf{11.14\times}$.
+
+  \item \textbf{Outlierii rezolvați:} \texttt{blocks.7.mlp.fc1}, cel mai
+    problematic strat din Faza~2 (MSE $= 3.32 \times 10^{-5}$), beneficiază
+    de o îmbunătățire de $\mathbf{179\times}$ cu per-channel.
+
+  \item \textbf{MLP-urile sunt cele mai sensibile:} Toate cele 5 straturi
+    din topul sensibilității sunt \texttt{mlp.fc1} sau \texttt{mlp.fc2}.
+    Straturile de atenție sunt robust tolerante la cuantizare.
+
+  \item \textbf{Blocurile timpurii și block~7 --- cele mai critice:}
+    Heatmap-ul de sensibilitate arată că blocurile 0--2 și block~7 au cel
+    mai mare impact individual asupra acurateții.
+
+  \item \textbf{FP16 rămâne cel mai eficient:} Cu zero degradare,
+    $2\times$ memorie și $1.37\times$ speedup, FP16 oferă cel mai bun
+    raport cost/beneficiu. INT8 per-channel este recomandat doar când
+    constrângerile de memorie impun reducerea la $<7$~MB.
+
+  \item \textbf{Efect de regularizare:} Unele straturi prezintă acuratețe
+    ușor mai mare după cuantizare ($+0.036$~pp), sugerând un efect
+    de regularizare prin zgomot de cuantizare.
+\end{enumerate}
+
+% ===========================================================================
+\begin{thebibliography}{9}
+% ===========================================================================
+
+\bibitem{dosovitskiy2021vit}
+A. Dosovitskiy, L. Beyer, A. Kolesnikov et al.,
+``An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale,''
+\emph{ICLR}, 2021. \href{https://arxiv.org/abs/2010.11929}{arXiv:2010.11929}.
+
+\bibitem{jacob2018quantization}
+B. Jacob, S. Kligys, B. Chen et al.,
+``Quantization and Training of Neural Networks for Efficient
+Integer-Arithmetic-Only Inference,''
+\emph{CVPR}, 2018. \href{https://arxiv.org/abs/1712.05877}{arXiv:1712.05877}.
+
+\bibitem{nagel2021whitepaper}
+M. Nagel, M. Fournarakis, R. A. Amjad, et al.,
+``A White Paper on Neural Network Quantization,''
+2021. \href{https://arxiv.org/abs/2106.08295}{arXiv:2106.08295}.
+
+\bibitem{dettmers2022llmint8}
+T. Dettmers, M. Lewis, Y. Belkada, L. Zettlemoyer,
+``LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale,''
+\emph{NeurIPS}, 2022. \href{https://arxiv.org/abs/2208.07339}{arXiv:2208.07339}.
+
+\bibitem{bondarenko2023quantizable}
+Y. Bondarenko, M. Nagel, T. Blankevoort,
+``Quantizable Transformers: Removing Outliers by Helping Attention Heads
+Do Nothing,''
+\emph{ECCV}, 2024. \href{https://arxiv.org/abs/2306.12929}{arXiv:2306.12929}.
+
+\bibitem{timm}
+R. Wightman, ``PyTorch Image Models (timm),'' 2019.
+\url{https://github.com/rwightman/pytorch-image-models}.
+
+\bibitem{imagenet}
+O. Russakovsky, J. Deng, H. Su et al.,
+``ImageNet Large Scale Visual Recognition Challenge,''
+\emph{IJCV}, vol.~115, no.~3, pp.~211--252, 2015.
+\href{https://arxiv.org/abs/1409.0575}{arXiv:1409.0575}.
+
+\end{thebibliography}
+
+\end{document}

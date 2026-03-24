@@ -1,5 +1,5 @@
 """
-Phase 1 report plots — FP16 static quantization on ImageNette.
+Phase 1 report plots — FP16 static quantization on ImageNet-1k.
 
 Reads ``results/FP16ImageNet/metrics/fp16_imagenet_results.json`` and saves
 all figures to ``results/FP16ImageNet/plots/``.
@@ -9,42 +9,18 @@ Usage:
 """
 
 import json
+import sys
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import numpy as np
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Global plot style
-# ═══════════════════════════════════════════════════════════════════════════
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
 
-plt.rcParams.update({
-    "font.family":       "DejaVu Serif",
-    "font.size":         12,
-    "axes.titlesize":    14,
-    "axes.titleweight":  "bold",
-    "axes.labelsize":    13,
-    "legend.fontsize":   11,
-    "xtick.labelsize":   11,
-    "ytick.labelsize":   11,
-    "figure.facecolor":  "white",
-    "axes.facecolor":    "#F8F8F8",
-    "axes.spines.top":   False,
-    "axes.spines.right": False,
-    "axes.grid":         True,
-    "grid.alpha":        0.4,
-    "grid.linestyle":    "--",
-})
+from src.utils.plot_style import apply_style, COLORS, save_fig
 
-SAVE_DPI = 300
-
-COLORS = {
-    "FP32": "#0072B2",   # blue
-    "FP16": "#009E73",   # teal
-}
+apply_style()
 
 RESULTS_PATH = Path("results/FP16ImageNet/metrics/fp16_imagenet_results.json")
 OUTPUT_DIR   = Path("results/FP16ImageNet/plots")
@@ -53,15 +29,6 @@ OUTPUT_DIR   = Path("results/FP16ImageNet/plots")
 def load_results() -> dict:
     with open(RESULTS_PATH) as f:
         return json.load(f)
-
-
-def save(fig: plt.Figure, name: str) -> Path:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    path = OUTPUT_DIR / name
-    fig.savefig(path, dpi=SAVE_DPI, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  Saved: {path}")
-    return path
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -83,7 +50,6 @@ def plot_accuracy(data: dict) -> None:
         linewidth=1.2,
     )
 
-    # Values above bars
     for bar, val in zip(bars, [fp32_acc, fp16_acc]):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
@@ -94,7 +60,7 @@ def plot_accuracy(data: dict) -> None:
         )
 
     ax.set_ylabel("Top-1 Accuracy (%)")
-    ax.set_title("Accuracy: FP32 vs FP16\nViT-Tiny pretrained on ImageNet-1k (ImageNette)")
+    ax.set_title("Accuracy: FP32 vs FP16\nViT-Tiny pretrained — ImageNet-1k validation")
     ax.set_ylim(70, 85)
     ax.yaxis.grid(True, alpha=0.4, linestyle="--")
 
@@ -108,7 +74,7 @@ def plot_accuracy(data: dict) -> None:
         fontsize=11, color="gray",
     )
 
-    save(fig, "01_accuracy_comparison.png")
+    save_fig(fig, OUTPUT_DIR, "01_accuracy_comparison.png")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -152,7 +118,7 @@ def plot_memory(data: dict) -> None:
         fontsize=11, color="gray",
     )
 
-    save(fig, "02_memory_comparison.png")
+    save_fig(fig, OUTPUT_DIR, "02_memory_comparison.png")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -197,7 +163,7 @@ def plot_latency(data: dict) -> None:
         fontsize=12, fontweight="bold", color=COLORS["FP16"],
     )
 
-    save(fig, "03_latency_comparison.png")
+    save_fig(fig, OUTPUT_DIR, "03_latency_comparison.png")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -216,7 +182,7 @@ def plot_summary(data: dict) -> None:
 
     fig, axes = plt.subplots(1, 3, figsize=(14, 5))
     fig.suptitle(
-        "FP16 Static Quantization — ViT-Tiny on ImageNette\n"
+        "FP16 Static Quantization — ViT-Tiny on ImageNet-1k\n"
         "(pretrained ImageNet-1k, Apple M4 MPS)",
         fontsize=14, fontweight="bold", y=1.02,
     )
@@ -266,7 +232,7 @@ def plot_summary(data: dict) -> None:
             color=COLORS["FP16"], fontsize=10, fontweight="bold")
 
     fig.tight_layout()
-    save(fig, "00_summary.png")
+    save_fig(fig, OUTPUT_DIR, "00_summary.png")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -298,7 +264,7 @@ def plot_tradeoff(data: dict) -> None:
     ax.set_title("Accuracy–Latency Tradeoff\nFP32 vs FP16 (model.half())")
     ax.legend()
 
-    save(fig, "04_accuracy_latency_tradeoff.png")
+    save_fig(fig, OUTPUT_DIR, "04_accuracy_latency_tradeoff.png")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -311,7 +277,7 @@ def write_markdown(data: dict) -> None:
     mem_ratio = data["comparison"]["memory_reduction_ratio"]
 
     lines = [
-        "# Faza 1 — FP16 Static Quantization pe ImageNette",
+        "# Faza 1 — FP16 Static Quantization on ImageNet-1k",
         "",
         f"**Data:** {data['timestamp']}  |  "
         f"**Model:** `{data['model']}`  |  "

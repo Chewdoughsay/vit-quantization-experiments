@@ -1,5 +1,5 @@
 """
-Phase 3 — Layer sensitivity analysis and systematic comparisons.
+Phase 3 — Layer sensitivity analysis and systematic comparisons on ImageNet-1k.
 
 Experiments:
   1. Per-tensor vs per-channel INT8  (global accuracy, per-layer MSE)
@@ -18,11 +18,8 @@ Usage:
 """
 
 import argparse
-import copy
 import json
-import os
 import sys
-import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -31,11 +28,8 @@ import timm.data
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torchvision import datasets
 from tqdm import tqdm
 
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
@@ -43,133 +37,35 @@ import numpy as np
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.data.imagenet_loader import load_imagenet_val
+from src.evaluation.evaluator import evaluate, model_size_mb, model_disk_mb
 from src.models.vit_model import create_vit_model
 from src.models.quantized_linear import (
     SKIP_PATTERNS,
     QuantizedLinear,
-    QuantizedLinearPerChannel,
     int8_quantize,
     int8_quantize_per_channel,
     quantization_error,
     quantization_error_per_channel,
     quantize_model_selective,
     quantize_model_per_channel,
-    _set_nested_module,
 )
+from src.utils.plot_style import apply_style, COLORS, save_fig
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Constants
 # ═══════════════════════════════════════════════════════════════════════════
 
-WNID_TO_IMAGENET = {
-    "n01440764": 0, "n02102040": 217, "n02979186": 482,
-    "n03000684": 491, "n03028079": 497, "n03394916": 566,
-    "n03417042": 569, "n03425413": 571, "n03445777": 574, "n03888257": 701,
-}
+RESULTS_DIR = Path("results/Phase3")
+OUTPUT_DIR  = RESULTS_DIR / "plots"
+METRICS_DIR = RESULTS_DIR / "metrics"
 
-IMAGENETTE_DIR  = Path("data/imagenette2-320")
-RESULTS_DIR     = Path("results/Phase3")
-OUTPUT_DIR      = RESULTS_DIR / "plots"
-METRICS_DIR     = RESULTS_DIR / "metrics"
-SAVE_DPI        = 300
-
-COLORS = {
-    "FP32":    "#0072B2",
-    "FP16":    "#009E73",
-    "INT8-pt": "#E69F00",
-    "INT8-pc": "#D55E00",
-}
-
-plt.rcParams.update({
-    "font.family": "DejaVu Serif", "font.size": 12,
-    "axes.titlesize": 14, "axes.titleweight": "bold",
-    "axes.labelsize": 13, "legend.fontsize": 11,
-    "xtick.labelsize": 10, "ytick.labelsize": 10,
-    "figure.facecolor": "white", "axes.facecolor": "#F8F8F8",
-    "axes.spines.top": False, "axes.spines.right": False,
-    "axes.grid": True, "grid.alpha": 0.4, "grid.linestyle": "--",
-})
+apply_style()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Dataset helpers
+# Helpers
 # ═══════════════════════════════════════════════════════════════════════════
-
-def get_val_loader(batch_size: int = 64, num_workers: int = 2,
-                   transform=None) -> tuple:
-    val_dataset = datasets.ImageFolder(
-        str(IMAGENETTE_DIR / "val"), transform=transform)
-    label_map = _build_label_map(val_dataset)
-    loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
-                        num_workers=num_workers, pin_memory=True,
-                        persistent_workers=(num_workers > 0))
-    return loader, label_map
-
-
-def _build_label_map(dataset: datasets.ImageFolder) -> list[int]:
-    mapping = [None] * len(dataset.classes)
-    for wnid, idx in dataset.class_to_idx.items():
-        mapping[idx] = WNID_TO_IMAGENET[wnid]
-    return mapping
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Evaluation
-# ═══════════════════════════════════════════════════════════════════════════
-
-@torch.no_grad()
-def evaluate(model: nn.Module, loader: DataLoader, label_map: list[int],
-             device: torch.device, desc: str = "Eval",
-             warmup_batches: int = 3) -> dict:
-    model.eval()
-    criterion = nn.CrossEntropyLoss()
-    is_half   = next(model.parameters()).dtype == torch.float16
-    lmap_t    = torch.tensor(label_map, dtype=torch.long, device=device)
-
-    correct, total, total_loss = 0, 0, 0.0
-    batch_times = []
-
-    for i, (images, local_labels) in enumerate(tqdm(loader, desc=desc, leave=False)):
-        images = images.to(device)
-        if is_half:
-            images = images.half()
-        imagenet_labels = lmap_t[local_labels.to(device)]
-
-        t0 = time.perf_counter()
-        outputs = model(images)
-        if device.type == "mps":   torch.mps.synchronize()
-        elif device.type == "cuda": torch.cuda.synchronize()
-        t1 = time.perf_counter()
-
-        if i >= warmup_batches:
-            batch_times.append(t1 - t0)
-
-        total_loss += criterion(outputs.float(), imagenet_labels).item()
-        correct    += (outputs.argmax(1) == imagenet_labels).sum().item()
-        total      += imagenet_labels.size(0)
-
-    avg_lat = (sum(batch_times) / len(batch_times) * 1000) if batch_times else 0.0
-    return {
-        "accuracy_percent": round(correct / total * 100, 4),
-        "avg_loss":         round(total_loss / len(loader), 6),
-        "avg_latency_ms":   round(avg_lat, 3),
-        "total_samples":    total,
-    }
-
-
-def model_memory_mb(model: nn.Module) -> float:
-    return sum(p.numel() * p.element_size()
-               for p in [*model.parameters(), *model.buffers()]) / (1024 ** 2)
-
-
-def model_disk_mb(model: nn.Module) -> float:
-    with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
-        path = f.name
-    torch.save(model.state_dict(), path)
-    size = os.path.getsize(path) / (1024 ** 2)
-    os.unlink(path)
-    return round(size, 3)
-
 
 def get_quantizable_layer_names(model: nn.Module) -> list[str]:
     return [
@@ -193,10 +89,10 @@ def layer_error_comparison(model: nn.Module) -> list[dict]:
             continue
         w = m.weight.data.cpu()
 
-        q_pt,  sc_pt  = int8_quantize(w)
+        q_pt, sc_pt = int8_quantize(w)
         err_pt = quantization_error(w, q_pt, sc_pt)
 
-        q_pc,  sc_pc  = int8_quantize_per_channel(w)
+        q_pc, sc_pc = int8_quantize_per_channel(w)
         err_pc = quantization_error_per_channel(w, q_pc, sc_pc)
 
         results.append({
@@ -220,7 +116,6 @@ def layer_error_comparison(model: nn.Module) -> list[dict]:
 def sensitivity_analysis(
     model_fp32: nn.Module,
     loader: DataLoader,
-    label_map: list[int],
     device: torch.device,
     layer_names: list[str],
 ) -> list[dict]:
@@ -241,8 +136,8 @@ def sensitivity_analysis(
         q_linear = q_linear.to(device)
         setattr(parent, parts[-1], q_linear)
 
-        res = evaluate(model_fp32, loader, label_map, device,
-                       desc=f"Sens {name[-25:]}")
+        res = evaluate(model_fp32, loader, device,
+                       desc=f"Sens {name[-25:]}", leave_tqdm=False)
         results.append({
             "layer":            name,
             "shape":            list(original_module.weight.shape),
@@ -261,7 +156,7 @@ def sensitivity_analysis(
 # Experiment 3 — Timing (FP32, FP16, INT8-pt, INT8-pc)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def timing_comparison(loader: DataLoader, label_map: list[int],
+def timing_comparison(loader: DataLoader,
                       device: torch.device, n_timing_batches: int = 30) -> dict:
     """Measure latency for each precision format over n_timing_batches batches."""
     configs = {
@@ -308,7 +203,7 @@ def timing_comparison(loader: DataLoader, label_map: list[int],
         timing[label] = {
             "avg_latency_ms": round(avg, 3),
             "std_ms":         round(std, 3),
-            "memory_mb":      round(model_memory_mb(model), 3),
+            "memory_mb":      round(model_size_mb(model), 3),
             "disk_mb":        round(model_disk_mb(model), 3),
         }
         print(f"{avg:.1f} ± {std:.1f} ms/batch")
@@ -320,14 +215,6 @@ def timing_comparison(loader: DataLoader, label_map: list[int],
 # ═══════════════════════════════════════════════════════════════════════════
 # Plots
 # ═══════════════════════════════════════════════════════════════════════════
-
-def save_fig(fig: plt.Figure, name: str) -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    path = OUTPUT_DIR / name
-    fig.savefig(path, dpi=SAVE_DPI, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  Saved: {path}")
-
 
 def plot_sensitivity(sensitivity: list[dict], fp32_acc: float) -> None:
     """Ranked bar chart — accuracy degradation per layer."""
@@ -358,7 +245,7 @@ def plot_sensitivity(sensitivity: list[dict], fp32_acc: float) -> None:
                label=f"Mean = {np.mean(degs):.4f} pp")
     ax.legend()
     fig.tight_layout()
-    save_fig(fig, "01_sensitivity_ranked.png")
+    save_fig(fig, OUTPUT_DIR, "01_sensitivity_ranked.png")
 
 
 def plot_mse_comparison(layer_errors: list[dict]) -> None:
@@ -403,7 +290,7 @@ def plot_mse_comparison(layer_errors: list[dict]) -> None:
     ax.legend()
 
     fig.tight_layout()
-    save_fig(fig, "02_mse_per_tensor_vs_per_channel.png")
+    save_fig(fig, OUTPUT_DIR, "02_mse_per_tensor_vs_per_channel.png")
 
 
 def plot_timing_and_memory(timing: dict) -> None:
@@ -452,7 +339,7 @@ def plot_timing_and_memory(timing: dict) -> None:
     ax.set_ylim(0, max(disk) * 1.3)
 
     fig.tight_layout()
-    save_fig(fig, "03_timing_memory.png")
+    save_fig(fig, OUTPUT_DIR, "03_timing_memory.png")
 
 
 def plot_global_comparison(results: dict) -> None:
@@ -471,7 +358,7 @@ def plot_global_comparison(results: dict) -> None:
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
     fig.suptitle("Global comparison — FP32 / FP16 / INT8 per-tensor / INT8 per-channel\n"
-                 "ViT-Tiny pretrained ImageNet-1k on ImageNette (3925 images)",
+                 "ViT-Tiny pretrained — ImageNet-1k validation (50000 images)",
                  fontsize=13, fontweight="bold", y=1.02)
 
     # Accuracy absolute
@@ -496,15 +383,14 @@ def plot_global_comparison(results: dict) -> None:
     ax.axhline(0, color="black", linewidth=0.8)
 
     fig.tight_layout()
-    save_fig(fig, "00_global_comparison.png")
+    save_fig(fig, OUTPUT_DIR, "00_global_comparison.png")
 
 
 def plot_sensitivity_heatmap(sensitivity: list[dict], fp32_acc: float) -> None:
     """Heatmap pe structura modelului: layer x metrica."""
-    # Organizăm pe block și tip
-    blocks  = list(range(12))
-    types   = ["attn.qkv", "attn.proj", "mlp.fc1", "mlp.fc2"]
-    matrix  = np.zeros((len(types), len(blocks)))
+    blocks = list(range(12))
+    types  = ["attn.qkv", "attn.proj", "mlp.fc1", "mlp.fc2"]
+    matrix = np.zeros((len(types), len(blocks)))
 
     for s in sensitivity:
         deg = fp32_acc - s["accuracy_percent"]
@@ -531,7 +417,7 @@ def plot_sensitivity_heatmap(sensitivity: list[dict], fp32_acc: float) -> None:
 
     plt.colorbar(im, ax=ax, label="Degradation (pp)")
     fig.tight_layout()
-    save_fig(fig, "04_sensitivity_heatmap.png")
+    save_fig(fig, OUTPUT_DIR, "04_sensitivity_heatmap.png")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -539,12 +425,12 @@ def plot_sensitivity_heatmap(sensitivity: list[dict], fp32_acc: float) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def write_markdown(results: dict) -> None:
-    fp32  = results["fp32"]
-    fp16  = results["fp16"]
-    pt    = results["int8_per_tensor"]
-    pc    = results["int8_per_channel"]
-    t     = results["timing"]
-    le    = results["layer_errors"]
+    fp32 = results["fp32"]
+    fp16 = results["fp16"]
+    pt   = results["int8_per_tensor"]
+    pc   = results["int8_per_channel"]
+    t    = results["timing"]
+    le   = results["layer_errors"]
 
     avg_improvement = sum(e["mse_improvement"] for e in le) / len(le)
 
@@ -586,7 +472,7 @@ def write_markdown(results: dict) -> None:
         "",
     ]
 
-    if "sensitivity" in results:
+    if "sensitivity" in results and results["sensitivity"]:
         sens     = results["sensitivity"]
         fp32_acc = fp32["accuracy_percent"]
         ranked   = sorted(sens, key=lambda s: fp32_acc - s["accuracy_percent"], reverse=True)
@@ -646,7 +532,7 @@ def main() -> None:
     val_transform = timm.data.create_transform(**data_config, is_training=False)
     del _ref_model
 
-    loader, label_map = get_val_loader(args.batch_size, args.num_workers, val_transform)
+    loader = load_imagenet_val(val_transform, args.batch_size, args.num_workers)
     print(f"Dataset: {len(loader.dataset)} images  |  {len(loader)} batches\n")
 
     # ------------------------------------------------------------------
@@ -657,7 +543,7 @@ def main() -> None:
     print("=" * 70)
     model_fp32 = create_vit_model("vit_tiny_patch16_224", num_classes=1000, pretrained=True)
     model_fp32 = model_fp32.to(device).eval()
-    fp32_res = evaluate(model_fp32, loader, label_map, device, desc="FP32")
+    fp32_res = evaluate(model_fp32, loader, device, desc="FP32", leave_tqdm=False)
     print(f"  FP32 accuracy: {fp32_res['accuracy_percent']:.2f}%\n")
 
     # ------------------------------------------------------------------
@@ -666,7 +552,7 @@ def main() -> None:
     print("STEP 2: FP16 (model.half())")
     model_fp16 = create_vit_model("vit_tiny_patch16_224", num_classes=1000, pretrained=True)
     model_fp16 = model_fp16.half().to(device).eval()
-    fp16_res = evaluate(model_fp16, loader, label_map, device, desc="FP16")
+    fp16_res = evaluate(model_fp16, loader, device, desc="FP16", leave_tqdm=False)
     print(f"  FP16 accuracy: {fp16_res['accuracy_percent']:.2f}%\n")
     del model_fp16
 
@@ -677,7 +563,7 @@ def main() -> None:
     model_pt = create_vit_model("vit_tiny_patch16_224", num_classes=1000, pretrained=True)
     model_pt, _ = quantize_model_selective(model_pt, verbose=False)
     model_pt = model_pt.to(device).eval()
-    pt_res = evaluate(model_pt, loader, label_map, device, desc="INT8-pt")
+    pt_res = evaluate(model_pt, loader, device, desc="INT8-pt", leave_tqdm=False)
     print(f"  INT8-pt accuracy: {pt_res['accuracy_percent']:.2f}%\n")
     del model_pt
 
@@ -688,7 +574,7 @@ def main() -> None:
     model_pc = create_vit_model("vit_tiny_patch16_224", num_classes=1000, pretrained=True)
     model_pc, _ = quantize_model_per_channel(model_pc, verbose=False)
     model_pc = model_pc.to(device).eval()
-    pc_res = evaluate(model_pc, loader, label_map, device, desc="INT8-pc")
+    pc_res = evaluate(model_pc, loader, device, desc="INT8-pc", leave_tqdm=False)
     print(f"  INT8-pc accuracy: {pc_res['accuracy_percent']:.2f}%\n")
     del model_pc
 
@@ -713,7 +599,7 @@ def main() -> None:
         print(f"STEP 6: Sensitivity analysis ({len(layer_names)} layere, ~{len(layer_names)*9//60} min)")
         model_clean = model_clean.to(device).eval()
         sensitivity = sensitivity_analysis(
-            model_clean, loader, label_map, device, layer_names)
+            model_clean, loader, device, layer_names)
         worst = min(sensitivity, key=lambda s: s["accuracy_percent"])
         best  = max(sensitivity, key=lambda s: s["accuracy_percent"])
         print(f"\n  Most sensitive: {worst['layer']} → {worst['accuracy_percent']:.2f}%")
@@ -727,7 +613,7 @@ def main() -> None:
     # STEP 7: Timing & memory
     # ------------------------------------------------------------------
     print("STEP 7: Timing & memory comparison")
-    timing = timing_comparison(loader, label_map, device)
+    timing = timing_comparison(loader, device)
 
     # ------------------------------------------------------------------
     # Save results
@@ -737,7 +623,7 @@ def main() -> None:
         "timestamp":   datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "pytorch_version": torch.__version__,
         "model":       "vit_tiny_patch16_224",
-        "dataset":     "imagenette2-320",
+        "dataset":     "ImageNet-1k validation (50000 images, 1000 classes)",
         "device":      args.device,
         "batch_size":  args.batch_size,
         "fp32":        fp32_res,
