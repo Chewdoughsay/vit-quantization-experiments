@@ -94,10 +94,9 @@
     \raggedleft
     \textbf{Coordonator:}\\
     Conf.\ dr.\ ing.\ Honorius Gâlmeanu\\
-    Departamentul de Informatică
+    Informatică Aplicată
   \end{minipage}\\[3cm]
 
-  {\small Brașov, 2026}
 \end{titlepage}
 
 % --- TOC ---
@@ -214,8 +213,8 @@ random erasing, CutMix/MixUp, label smoothing.
     Optimizer            & AdamW \\
     Learning rate        & $3 \times 10^{-4}$ \\
     Scheduler            & Cosine annealing (warm restarts) \\
-    Pre-training         & ImageNet-1k (\texttt{pretrained=True}) \\
-    Fine-tuning dataset  & CIFAR-10 \\
+    Inițializare ponderi & Aleatorie (\texttt{pretrained=False}) \\
+    Dataset antrenare    & CIFAR-10 \\
     Device               & Apple M4 MPS \\
     PyTorch              & 2.9.1 \\
     \bottomrule
@@ -307,7 +306,8 @@ Diferența între FP32 și FP16 (AMP) este neglijabilă:
 \begin{itemize}
   \item Cu augmentare basic: FP16 este marginal mai bun cu $+0.21$~pp
   \item Cu augmentare extended: FP16 este mai bun cu $+0.52$~pp
-  \item Timpii de antrenare sunt comparabili ($\pm 3$\%)
+  \item Timpii de antrenare sunt comparabili ($\pm 4$\%)
+    --- variațiile pot fi cauzate de condiții de sistem, nu de precizia numerică
 \end{itemize}
 
 \textbf{Concluzie:} Precizia numerică FP32 vs.\ FP16 nu are impact practic
@@ -331,8 +331,8 @@ asupra acurateții pe CIFAR-10, confirmând robustețea ViT la reducerea precizi
   \centering
   \includegraphics[width=0.65\textwidth]{../results/preliminary/report_plots/C3_training_time_bar.png}
   \caption{Timpul total de antrenare. Toate experimentele durează
-    $\approx 7$--7.5~ore pe Apple M4 MPS. AugmFP16 este marginal cel mai rapid
-    (7.09~h), deoarece FP16 reduce overhead-ul per operație.}
+    $\approx 7$--7.5~ore pe Apple M4 MPS, cu variații de $\pm 3$\% între
+    configurații.}
   \label{fig:training_time}
 \end{figure}
 
@@ -387,7 +387,7 @@ garantează o mapare bijectivă la 256 valori discrete.
     \midrule
     FP16 (original)   & 83.43\% & ---         & 0.5572 \\
     FP8 per-tensor    & 83.41\% & $+0.02$~pp  & 0.5581 \\
-    FP8 per-channel   & 83.42\% & $+0.01$~pp  & 0.5577 \\
+    FP8 per-channel   & 83.42\% & $+0.01$~pp  & 0.5576 \\
     \bottomrule
   \end{tabular}
   \label{tab:fp8_results}

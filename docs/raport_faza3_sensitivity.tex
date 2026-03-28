@@ -95,10 +95,9 @@
     \raggedleft
     \textbf{Coordonator:}\\
     Conf.\ dr.\ ing.\ Honorius Gâlmeanu\\
-    Departamentul de Informatică
+    Informatică Aplicată
   \end{minipage}\\[3cm]
 
-  {\small Brașov, 2026}
 \end{titlepage}
 
 % --- TOC ---
@@ -345,10 +344,11 @@ sursă de degradare, iar per-channel rezolvă exact această problemă.
 \begin{figure}[H]
   \centering
   \includegraphics[width=\textwidth]{../results/Phase3/plots/01_sensitivity_ranked.png}
-  \caption{Sensitivity analysis: degradare de acuratețe per strat (sortat
-    descrescător). Fiecare bară reprezintă impactul cuantizării INT8 per-tensor
-    a unui singur strat. Straturile din top 25\% sensibilitate sunt marcate
-    cu portocaliu.}
+  \caption{Sensitivity analysis: degradare de acuratețe per strat în ordinea
+    structurală a rețelei (blocks.0 → blocks.11, câte 4 straturi per bloc:
+    \texttt{attn.qkv}, \texttt{attn.proj}, \texttt{mlp.fc1}, \texttt{mlp.fc2}).
+    Fiecare bară reprezintă impactul cuantizării INT8 per-tensor a unui singur strat.
+    Portocaliu = top 25\% cele mai sensibile. Linia gri punctată = media degradării.}
   \label{fig:sensitivity_ranked}
 \end{figure}
 
@@ -457,8 +457,9 @@ Pe baza tuturor rezultatelor din Fazele~1--3:
 
 \begin{enumerate}
   \item \textbf{Pentru deployment general:} FP16 (\texttt{model.half()}) este
-    recomandarea implicită --- zero degradare, $2\times$ memorie, $1.37\times$
-    speedup. Nu există niciun motiv practic de a nu-l adopta.
+    recomandarea implicită --- degradare neglijabilă ($-0.004$~pp),
+    $2\times$ reducere de memorie, $1.37\times$ speedup.
+    Nu există niciun motiv practic de a nu-l adopta.
 
   \item \textbf{Pentru constrângeri de memorie:} INT8 per-channel oferă
     $3.26\times$ reducere cu doar $-0.032$~pp degradare --- cel mai bun
@@ -533,9 +534,9 @@ Pe baza tuturor rezultatelor din Fazele~1--3:
     Heatmap-ul de sensibilitate arată că blocurile 0--2 și block~7 au cel
     mai mare impact individual asupra acurateții.
 
-  \item \textbf{FP16 rămâne cel mai eficient:} Cu zero degradare,
-    $2\times$ memorie și $1.37\times$ speedup, FP16 oferă cel mai bun
-    raport cost/beneficiu. INT8 per-channel este recomandat doar când
+  \item \textbf{FP16 rămâne cel mai eficient:} Cu degradare neglijabilă
+    ($-0.004$~pp), $2\times$ reducere de memorie și $1.37\times$ speedup,
+    FP16 oferă cel mai bun raport cost/beneficiu. INT8 per-channel este recomandat doar când
     constrângerile de memorie impun reducerea la $<7$~MB.
 
   \item \textbf{Efect de regularizare:} Unele straturi prezintă acuratețe
