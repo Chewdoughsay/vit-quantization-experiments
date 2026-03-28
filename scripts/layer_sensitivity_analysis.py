@@ -217,18 +217,19 @@ def timing_comparison(loader: DataLoader,
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_sensitivity(sensitivity: list[dict], fp32_acc: float) -> None:
-    """Ranked bar chart — accuracy degradation per layer."""
+    """Bar chart — accuracy degradation per layer in network order."""
+    # Keep natural layer order (blocks.0 → blocks.11)
     degradations = [
         {"layer": s["layer"], "deg": fp32_acc - s["accuracy_percent"]}
         for s in sensitivity
     ]
-    degradations.sort(key=lambda x: x["deg"], reverse=True)
 
     names = [d["layer"].replace("blocks.", "b").replace(".attn.", ".a.").replace(".mlp.", ".m.") for d in degradations]
     degs  = [d["deg"] for d in degradations]
 
+    threshold = np.percentile(degs, 75)
     colors_bars = [
-        "#D55E00" if v > np.percentile(degs, 75) else COLORS["INT8-pt"]
+        "#D55E00" if v > threshold else COLORS["INT8-pt"]
         for v in degs
     ]
 
