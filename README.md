@@ -1,555 +1,186 @@
-# ViT FP8 Precision Experiments
+# ViT Quantization Experiments
 
-Comprehensive experimental study of Vision Transformer (ViT) performance across different numerical precision levels (FP32, FP16, FP8) and data augmentation strategies on CIFAR-10.
-
-## 📋 Project Overview
-
-This project investigates the trade-offs between computational efficiency and model accuracy when training Vision Transformers with reduced precision arithmetic. We systematically compare:
-
-- **Precision Levels**: FP32 (baseline), FP16 (mixed precision), FP8 (experimental)
-- **Augmentation Strategies**: Basic (standard) vs. Extended (aggressive regularization)
-- **Hardware Utilization**: Apple Silicon (M1/M2/M3) with GPU/CPU monitoring
-- **Training Dynamics**: Convergence behavior, generalization gap, overfitting analysis
-
-### Key Research Questions
-
-1. How much accuracy is lost when moving from FP32 → FP16 → FP8?
-2. Does extended data augmentation improve generalization across precision levels?
-3. What is the computational speedup from reduced precision training?
-4. How does hardware utilization (GPU, CPU, thermal throttling) differ across experiments?
+Lucrare de licență — **Impactul Cuantizării Numerice asupra Vision Transformers**
+Tudose Alexandru · Universitatea Transilvania din Brașov · 2026
+Coordonator: Conf. dr. ing. Honorius Gâlmeanu
 
 ---
 
-## 🎯 Experiments
+## Descriere
 
-We conduct 4 primary experiments in a factorial design:
-
-| Experiment | Precision | Augmentation | Description |
-|------------|-----------|--------------|-------------|
-| **BaseFP32** | FP32 | Basic | Baseline with full precision and minimal augmentation |
-| **AugmFP32** | FP32 | Extended | FP32 with aggressive augmentation for comparison |
-| **BaseFP16** | FP16 | Basic | Mixed precision (AMP) with basic augmentation |
-| **AugmFP16** | FP16 | Extended | Mixed precision with extended augmentation |
-| **FP8Test** | FP8 | Extended | Experimental FP8 quantization (convert trained model) |
-
-### Augmentation Details
-
-**Basic Augmentation:**
-- Resize to 224×224
-- RandomCrop with padding=28
-- RandomHorizontalFlip (p=0.5)
-- Normalization (CIFAR-10 statistics)
-
-**Extended Augmentation:**
-- All basic augmentations, plus:
-- ColorJitter (brightness, contrast, saturation, hue)
-- RandomRotation (±15 degrees)
-- RandomErasing (p=0.5, simulates occlusion)
+Studiu experimental sistematic al impactului cuantizării numerice (FP16, INT8,
+FP8) asupra unui Vision Transformer pretrained (`vit_tiny_patch16_224`) evaluat
+pe ImageNet-1k validation (50 000 imagini, 1 000 clase).
 
 ---
 
-## 📁 Project Structure
+## Structura proiectului
 
 ```
 ViT-FP8-experiments/
-├── configs/                     # YAML configuration files
-│   ├── BaseFP32.yaml           # FP32 baseline
-│   ├── AugmFP32.yaml           # FP32 + extended augmentation
-│   ├── BaseFP16.yaml           # FP16 baseline
-│   ├── AugmFP16.yaml           # FP16 + extended augmentation
-│   └── FP8Test.yaml            # FP8 quantization test
+├── configs/
+│   └── preliminary/         # YAML configs pentru studiul CIFAR-10
 │
-├── src/                         # Source code modules
-│   ├── data/
-│   │   └── dataset.py          # CIFAR-10 loader with augmentation
+├── src/
+│   ├── data/                # Dataset loaders
 │   ├── models/
-│   │   └── vit_model.py        # Vision Transformer models (timm)
-│   ├── training/
-│   │   └── trainer.py          # Comprehensive ViT trainer with AMP
-│   └── utils/
-│       ├── metrics.py          # Metrics tracking and analysis
-│       ├── system_monitor.py   # CPU/memory/thermal monitoring
-│       └── gpu_monitor.py      # Apple Silicon GPU monitoring
+│   │   ├── vit_model.py     # Creare model timm
+│   │   └── quantized_linear.py  # INT8 QuantizedLinear (per-tensor + per-channel)
+│   ├── training/            # Trainer CIFAR-10 (Faza 0)
+│   └── utils/               # Metrici, monitorizare hardware
 │
-├── scripts/                     # Executable scripts
-│   ├── train.py                # Main training script (uses YAML configs)
-│   ├── evaluate_fp8_quantization.py  # FP8 post-training quantization evaluation
-│   ├── generate_report_plots.py      # Generate all report figures and summary
-│   └── extras/                 # Utility scripts (not used in main workflow)
-│       ├── extract_metrics.py      # Metrics extraction and analysis
-│       ├── generate_plots.py       # Per-experiment plot generation
-│       ├── compare_experiments.py  # Experiment comparison tables
-│       └── plot_hardware_stats.py  # Hardware monitoring plots
+├── scripts/
+│   ├── preliminary/         # Faza 0: antrenare CIFAR-10
+│   ├── evaluate_fp16_imagenet.py    # Faza 1: FP16 static
+│   ├── evaluate_int8_quantization.py # Faza 2: INT8 per-tensor
+│   ├── layer_sensitivity_analysis.py # Faza 3: sensitivity analysis
+│   ├── generate_fp16_imagenet_plots.py
+│   ├── generate_int8_imagenet_plots.py
+│   ├── experiments/
+│   │   ├── mlp_only_int8.py   # Experiment: cuantizare MLP-only vs full
+│   │   └── fp8_vs_int8.py     # Experiment: FP8 E4M3FN vs INT8
+│   └── phase4/              # Faza 4: scalare modele mari (Colab)
+│       ├── evaluate_model.py
+│       ├── evaluate_fp8_native.py
+│       ├── compare_cross_model.py
+│       └── phase4_colab.ipynb
 │
-├── results/                     # Experiment outputs
-│   ├── BaseFP32/
-│   │   ├── checkpoints/        # Model checkpoints
-│   │   ├── metrics/            # Training metrics + hardware stats
-│   │   └── plots/              # Visualizations
-│   ├── AugmFP32/
-│   ├── BaseFP16/
-│   └── AugmFP16/
+├── docs/
+│   ├── raport_studiu_preliminar.tex
+│   ├── raport_faza1_fp16.tex
+│   ├── raport_faza2_int8.tex
+│   ├── raport_faza3_sensitivity.tex
+│   ├── raport_experiment_mlp_only.tex
+│   ├── raport_experiment_fp8_vs_int8.tex
+│   ├── plan_executie_licenta.md
+│   └── archive/             # Rapoarte vechi
 │
-├── data/                        # CIFAR-10 dataset (auto-downloaded)
-└── README.md                    # This file
+├── results/                 # Rezultate experimente (gitignored)
+└── data/                    # Datasets (gitignored)
 ```
 
 ---
 
-## 🚀 Installation
+## Faze experimentale
 
-### Prerequisites
-
-- Python 3.8+
-- PyTorch 2.0+ with MPS/CUDA support
-- macOS (for Apple Silicon GPU monitoring) or Linux/Windows
-
-### Setup
+### Faza 0 — Studiu Preliminar (CIFAR-10)
+Antrenare ViT-Tiny de la zero pe CIFAR-10 cu 4 configurații (FP32/FP16 × Basic/Extended augmentation). Cuantizare post-training FP8 pe cel mai bun model.
 
 ```bash
-# Clone repository
+python scripts/preliminary/train.py --config configs/preliminary/AugmFP16.yaml
+python scripts/preliminary/evaluate_fp8_quantization.py
+```
+
+### Faza 1 — FP16 Static pe ImageNet-1k
+Evaluare FP32 baseline vs `model.half()` pe setul de validare ImageNet-1k.
+
+```bash
+python scripts/evaluate_fp16_imagenet.py
+python scripts/generate_fp16_imagenet_plots.py
+```
+
+**Rezultate:** FP32 75.456% → FP16 75.452% (−0.004 pp), 2.00× reducere memorie, 1.22× speedup.
+
+### Faza 2 — INT8 Weight-Only pe ImageNet-1k
+Cuantizare INT8 per-tensor cu scalare liniară, selectivă (skip LayerNorm, head).
+
+```bash
+python scripts/evaluate_int8_quantization.py
+python scripts/generate_int8_imagenet_plots.py
+```
+
+**Rezultate:** 75.134% (−0.322 pp), 3.29× reducere memorie.
+
+### Faza 3 — Sensitivity Analysis
+Per-tensor vs per-channel, sensitivity per strat (48 evaluări), timing și memory profiling.
+
+```bash
+python scripts/layer_sensitivity_analysis.py
+# sau fără sensitivity analysis (mai rapid):
+python scripts/layer_sensitivity_analysis.py --skip-sensitivity
+```
+
+**Rezultate:** INT8-pc 75.424% (−0.032 pp), îmbunătățire MSE 11.14×, outlier block.7.mlp identificat.
+
+### Experimente adiționale
+
+**MLP-only INT8** — cuantizare exclusivă a straturilor MLP, cu straturile de atenție în FP32:
+```bash
+python scripts/experiments/mlp_only_int8.py
+```
+**Rezultat:** INT8-mlp-pc 75.486% (+0.030 pp față de FP32), ipoteză confirmată.
+
+**FP8 E4M3FN vs INT8** — replică Faza 2 cu stocare reală în float8_e4m3fn:
+```bash
+python scripts/experiments/fp8_vs_int8.py
+```
+**Rezultat:** FP8-pt bate INT8-pt (+0.124 pp), INT8-pc bate FP8-pc (+0.068 pp).
+
+### Faza 4 — Scalare modele mari (Colab Pro+)
+ViT-Small (22M) și ViT-Base (86M) pe A100, FP8 hardware nativ.
+
+```bash
+# Pe Google Colab Pro+ cu A100:
+# Deschide scripts/phase4/phase4_colab.ipynb
+```
+
+---
+
+## Rezultate sumar
+
+| Format | Accuracy | Δ FP32 | Memorie | Latență (M4) |
+|--------|----------|--------|---------|--------------|
+| FP32 | 75.456% | — | 21.81 MB | 200 ms/batch |
+| FP16 | 75.452% | −0.004 pp | 10.91 MB | 146 ms/batch |
+| INT8-pt | 75.134% | −0.322 pp | 6.62 MB | 200 ms/batch |
+| INT8-pc | 75.424% | −0.032 pp | 6.70 MB | 199 ms/batch |
+| FP8-pt | 75.258% | −0.198 pp | 6.62 MB | 251 ms/batch |
+| FP8-pc | 75.356% | −0.100 pp | 6.70 MB | 275 ms/batch |
+| INT8-mlp-pc | 75.486% | +0.030 pp | 11.73 MB | 182 ms/batch |
+
+---
+
+## Setup
+
+```bash
 git clone <repository-url>
 cd ViT-FP8-experiments
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118  # For CUDA
-# OR for Apple Silicon:
-pip install torch torchvision torchaudio
-
-# Install other requirements
-pip install timm pyyaml numpy matplotlib tqdm psutil
+python -m venv .venv
+source .venv/bin/activate
+pip install torch torchvision torchaudio timm datasets huggingface_hub \
+            pyyaml numpy matplotlib tqdm psutil
 ```
 
-### Verify Installation
+### Date
 
-```bash
-python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'MPS available: {torch.backends.mps.is_available()}')"
-python -c "import timm; print(f'timm version: {timm.__version__}')"
-```
+ImageNet-1k validation — 14 fișiere parquet în `data/imagenet-1k/`
+(descărcare manuală de pe HuggingFace, `data/` este gitignored)
 
 ---
 
-## 📖 Usage
+## Hardware
 
-### 1. Train Experiments with Config Files (Recommended)
+Toate experimentele (Fazele 0-3 + experimente adiționale) au rulat pe:
+- **MacBook Air, Apple M4, 16 GB RAM**
+- Backend PyTorch: MPS (Metal Performance Shaders)
+- PyTorch 2.9.1, Python 3.11
 
-Use the general training script with YAML config files for maximum flexibility:
-
-```bash
-# Run BaseFP32 (FP32 baseline)
-python scripts/train.py --config configs/BaseFP32.yaml
-
-# Run AugmFP32 (FP32 with extended augmentation)
-python scripts/train.py --config configs/AugmFP32.yaml
-
-# Run BaseFP16 (FP16 mixed precision)
-python scripts/train.py --config configs/BaseFP16.yaml
-
-# Run AugmFP16 (FP16 + extended augmentation - best trade-off)
-python scripts/train.py --config configs/AugmFP16.yaml
-
-# Override device from config
-python scripts/train.py --config configs/AugmFP16.yaml --device cuda
-```
-
-**Output per Experiment:**
-- Checkpoints: `results/{ExperimentName}/checkpoints/best_model.pt`, `checkpoint_epoch_N.pt`
-- Metrics: `results/{ExperimentName}/metrics/final_metrics.json`
-- **Timing Report**: `results/{ExperimentName}/metrics/timing_report.json` ← Detailed timing info!
-- Hardware stats: `results/{ExperimentName}/metrics/hardware_stats.json`
-- **GPU stats** (Apple Silicon): `results/{ExperimentName}/metrics/gpu_stats.csv` ← Automatic with sudo!
-
-**Estimated Time per Experiment:**
-- **BaseFP32**: ~100-120 min (baseline)
-- **AugmFP32**: ~105-125 min (slower due to augmentation)
-- **BaseFP16**: ~85-95 min (**~30% faster** than FP32!)
-- **AugmFP16**: ~90-100 min (best speed/accuracy trade-off)
-
-### 2. Generate Report Plots and Summary
-
-After running all experiments and the FP8 evaluation, generate all publication-quality figures:
-
-```bash
-python scripts/generate_report_plots.py
-```
-
-**Generates:**
-- All comparison plots (`results/report_plots/`)
-- `results/experiment_comparison.json` — rebuilt from raw data
-- `results/comparison_table.csv` — tabular metrics
-- `results/summary.md` — markdown summary with key findings
-
-### 3. FP8 Quantization Evaluation
-
-After training the AugmFP16 model, evaluate FP8 post-training quantization:
-
-```bash
-# Must run AugmFP16 experiment first!
-python scripts/evaluate_fp8_quantization.py
-```
-
-**What it does:**
-1. Loads the best FP16 model from `results/AugmFP16/checkpoints/best_model.pt`
-2. Evaluates original FP16 accuracy
-3. Quantizes all weights to FP8 E4M3 format (simulated)
-4. Evaluates quantized model accuracy
-5. Measures accuracy degradation
-
-**Output:**
-- Results: `results/FP8Test/metrics/fp8_quantization_results.json`
-- Includes: Original accuracy, quantized accuracy, degradation metrics
-
-**Expected degradation:** ~2-3% accuracy loss (acceptable for deployment)
-
-**Note:** This is NOT a training script - it's a conversion and evaluation test to assess FP8 viability for inference deployment.
-
-### 4. Utility Scripts (extras/)
-
-Additional standalone utilities are available in `scripts/extras/`:
-
-```bash
-# Single experiment metrics summary
-python scripts/extras/extract_metrics.py --experiment results/BaseFP32 --detailed
-
-# Per-experiment training curves
-python scripts/extras/generate_plots.py --experiment results/BaseFP32
-
-# Side-by-side comparison table
-python scripts/extras/compare_experiments.py
-
-# Hardware monitoring plots
-python scripts/extras/plot_hardware_stats.py --all
-```
+Faza 4: Google Colab Pro+, NVIDIA A100 (planificat).
 
 ---
 
-## 📊 Interpreting Results
+## Structura rezultatelor
 
-### Metrics Summary
-
-After running experiments, check the metrics summary:
-
-```bash
-python scripts/extras/extract_metrics.py --all --output results/metrics_summary.csv
+```
+results/
+├── preliminary/             # Faza 0: CIFAR-10
+├── FP16ImageNet/            # Faza 1
+├── INT8ImageNet/            # Faza 2
+├── Phase3/                  # Faza 3
+├── Phase4/                  # Faza 4 (Colab)
+└── experiments/
+    ├── mlp_only_int8/
+    └── fp8_vs_int8/
 ```
 
-**Key Metrics:**
-- **Best Validation Accuracy**: Highest accuracy achieved during training
-- **Convergence Epoch**: When model reached within 0.5% of best accuracy
-- **Generalization Gap**: Final train_acc - final val_acc (lower is better)
-- **Overfitting Score**: best_val_acc - final_val_acc (>0 indicates overfitting)
-- **Average Epoch Time**: Training speed (lower is better)
-
-### Expected Results (Typical)
-
-| Experiment | Best Val Acc | Convergence | Epoch Time | Notes |
-|------------|--------------|-------------|------------|-------|
-| BaseFP32   | ~82-84%      | ~35-40 epochs | ~125s    | Baseline reference |
-| AugmFP32   | ~83-85%      | ~40-45 epochs | ~130s    | Better generalization |
-| BaseFP16   | ~82-84%      | ~35-40 epochs | ~85-95s  | ~30% faster, similar accuracy |
-| AugmFP16   | ~83-85%      | ~40-45 epochs | ~90-100s | Best speed/accuracy trade-off |
-
-**Note:** Actual results depend on hardware, random seeds, and system load.
-
-### Visualizations
-
-Check `results/{ExperimentName}/plots/` for:
-
-1. **training_curves.png**: Loss and accuracy over time
-   - Look for smooth convergence (no wild oscillations)
-   - Check for overfitting (val_loss increasing while train_loss decreases)
-
-2. **learning_rate.png**: LR schedule
-   - Should show cosine annealing (smooth decay)
-
-3. **hardware_stats.png**: System resource usage
-   - CPU should be <80% on average (data loading bottleneck if higher)
-   - Memory should be stable (no leaks)
-   - Thermal pressure should be 0 or low (cooling is adequate)
-
----
-
-## 🔬 Advanced Usage
-
-### GPU Monitoring (Apple Silicon - Automatic!)
-
-GPU monitoring is now **automatically integrated** into training scripts! On macOS with Apple Silicon:
-
-**You'll be prompted for sudo password when training starts:**
-```bash
-$ python scripts/train.py --config configs/BaseFP16.yaml
-🔒 GPU Monitor requires sudo access for powermetrics...
-Password: [enter your password]
-🎮 GPU Monitor started...
-💾 Saving to: results/BaseFP16/metrics/gpu_stats.csv
-```
-
-**No sudo? No problem!** If you cancel the password prompt:
-```bash
-⚠️  Sudo access denied. GPU monitoring disabled.
-   (Training will continue without GPU stats)
-```
-
-**GPU stats are automatically saved to the experiment folder:**
-- Output: `results/{ExperimentName}/metrics/gpu_stats.csv`
-- Contains: Timestamp, GPU utilization %, GPU power (mW), CPU power (mW)
-
-**Note:** The separate `gpu_monitor.py` tool is still available for standalone monitoring if needed.
-
-### Custom Configuration
-
-For custom experiments, create a new config file based on existing ones:
-
-1. Copy an existing config:
-```bash
-cp configs/AugmFP16.yaml configs/MyExperiment.yaml
-```
-
-2. Edit the YAML file to customize your experiment:
-```yaml
-name: "MyExperiment"
-description: "Custom experiment with larger model"
-
-model:
-  name: "vit_small_patch16_224"  # Larger model
-  num_classes: 10
-  pretrained: false
-
-training:
-  num_epochs: 100  # More training
-  learning_rate: 0.0005  # Lower LR
-  use_amp: true
-  # ... other settings
-```
-
-3. Run your custom experiment:
-```bash
-python scripts/train.py --config configs/MyExperiment.yaml
-```
-
-### Resume Training (Not Yet Implemented)
-
-Future feature - would require adding resume functionality to train.py:
-```bash
-# Planned future usage:
-python scripts/train.py --config configs/BaseFP32.yaml --resume results/BaseFP32/checkpoints/checkpoint_epoch_30.pt
-```
-
----
-
-## 🛠️ Development
-
-### Code Quality
-
-All source code includes comprehensive docstrings following NumPy/Google style conventions:
-
-```python
-from src.models.vit_model import create_vit_model, get_model_info
-
-# All functions have detailed documentation
-help(create_vit_model)
-help(get_model_info)
-```
-
-### Running Tests
-
-```bash
-# Test model creation
-python src/models/vit_model.py
-
-# Test data loader
-python src/data/dataset.py
-
-# Test metrics tracking
-python src/utils/metrics.py
-```
-
-### Adding New Models
-
-Edit `src/models/vit_model.py` to add new architectures:
-
-```python
-MODEL_CONFIGS = {
-    'vit_large': {
-        'name': 'vit_large_patch16_224',
-        'params_approx': '300M',
-        'description': 'ViT-Large - highest capacity'
-    }
-}
-```
-
----
-
-## 📈 Results Interpretation Guide
-
-### 1. Accuracy Analysis
-
-**What to look for:**
-- **FP32 vs FP16**: Expect <1% accuracy difference (FP16 should be nearly identical)
-- **Basic vs Extended Augmentation**: Extended should have +1-2% accuracy (better generalization)
-- **Convergence Speed**: FP16 trains ~30% faster per epoch, similar convergence behavior
-
-**Red flags:**
-- FP16 accuracy >2% lower than FP32: Possible numerical instability (use gradient clipping)
-- Extended augmentation worse than basic: Data augmentation too aggressive
-- High generalization gap (>5%): Model is overfitting (increase augmentation or regularization)
-
-### 2. Training Dynamics
-
-**Healthy training:**
-- Smooth loss curves (no sudden spikes)
-- Val accuracy tracks train accuracy with small gap
-- Best val accuracy near the end of training (good convergence)
-
-**Problematic training:**
-- Oscillating loss: Learning rate too high or data issue
-- Early plateau: Learning rate too low or model capacity insufficient
-- Overfitting: Val loss increases while train loss decreases (add regularization)
-
-### 3. Hardware Efficiency
-
-**Good utilization:**
-- CPU: 40-80% (data loading + model training)
-- Memory: Stable, no growth over time
-- Thermal: 0 or low (system stays cool)
-- GPU (if monitored): 70-95% utilization
-
-**Poor utilization:**
-- CPU >90%: Data loading bottleneck (increase num_workers or use pin_memory)
-- Thermal pressure >0: System throttling (reduce batch size or improve cooling)
-- GPU <50%: CPU bottleneck or small batch size
-
----
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**1. Out of Memory (OOM)**
-```bash
-# Reduce batch size in config
-batch_size: 64  # Instead of 128
-```
-
-**2. MPS Backend Error (Apple Silicon)**
-```bash
-# Fall back to CPU
-python scripts/train.py --config configs/BaseFP32.yaml --device cpu
-```
-
-**3. Slow Training**
-```bash
-# Increase data loader workers
-num_workers: 4  # In config file
-
-# Enable persistent workers (automatic in code)
-```
-
-**4. Import Errors**
-```bash
-# Ensure project root is in PYTHONPATH
-export PYTHONPATH="${PYTHONPATH}:$(pwd)"
-```
-
-**5. GPU Monitoring Requires Sudo**
-```bash
-# powermetrics requires root access
-sudo python src/utils/gpu_monitor.py --name experiment
-```
-
----
-
-## 📚 Dependencies
-
-### Core Libraries
-- **PyTorch** (2.0+): Deep learning framework with MPS/CUDA support
-- **timm** (0.9+): Vision Transformer models (PyTorch Image Models)
-- **torchvision**: CIFAR-10 dataset and transforms
-
-### Utilities
-- **PyYAML**: Configuration file parsing
-- **NumPy**: Numerical operations and statistics
-- **matplotlib**: Plotting and visualization
-- **tqdm**: Progress bars for training loops
-- **psutil**: System resource monitoring (CPU, memory)
-
-### Optional
-- **powermetrics** (macOS built-in): GPU monitoring on Apple Silicon
-
----
-
-## 🎓 Citation
-
-If you use this code for research, please cite:
-
-```bibtex
-@misc{vit-fp8-experiments,
-  author = {Your Name},
-  title = {Vision Transformer FP8 Precision Experiments},
-  year = {2024},
-  publisher = {GitHub},
-  url = {https://github.com/yourusername/ViT-FP8-experiments}
-}
-```
-
-### Related Papers
-
-- **Vision Transformers (ViT)**: [Dosovitskiy et al., "An Image is Worth 16x16 Words", ICLR 2021](https://arxiv.org/abs/2010.11929)
-- **Mixed Precision Training**: [Micikevicius et al., "Mixed Precision Training", ICLR 2018](https://arxiv.org/abs/1710.03740)
-- **FP8 Training**: [Noune et al., "8-bit Numerical Formats for Deep Neural Networks", 2022](https://arxiv.org/abs/2206.02915)
-
----
-
-## 📝 License
-
-This project is released under the MIT License. See LICENSE file for details.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## 📧 Contact
-
-For questions or issues:
-- Open an issue on GitHub
-- Email: your.email@example.com
-
----
-
-## 🙏 Acknowledgments
-
-- **timm library** by Ross Wightman for excellent ViT implementations
-- **PyTorch team** for MPS backend and mixed precision support
-- **CIFAR-10 dataset** creators for the benchmark dataset
-
----
-
-## 📖 Additional Resources
-
-### Documentation
-- [Full API Documentation](docs/API.md) (if available)
-- [Development Roadmap](REFACTORING_PLAN.md)
-- [Experiment Configs Guide](docs/configs.md) (if available)
-
-### External Resources
-- [PyTorch AMP Tutorial](https://pytorch.org/docs/stable/amp.html)
-- [timm Documentation](https://huggingface.co/docs/timm/index)
-- [Vision Transformer Explained](https://jalammar.github.io/illustrated-transformer/)
-
----
-
-**Last Updated:** 2024 (Update with actual date)
-**Version:** 1.0.0
+Toate rezultatele sunt salvate în JSON și gitignored.
