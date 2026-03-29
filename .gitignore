@@ -24,6 +24,10 @@ ENV/
 
 # Data (datasets — never commit)
 data/
+imagenette2-320/
+
+# Jupyter notebooks (generated artifacts)
+*.ipynb
 
 # Results and outputs
 results/
