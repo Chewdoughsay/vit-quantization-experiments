@@ -23,7 +23,7 @@ ENV/
 *.ipynb
 
 # Data (datasets — never commit)
-data/
+/data/
 imagenette2-320/
 
 # Jupyter notebooks (generated artifacts)
