@@ -166,6 +166,115 @@ def plot_latency_scaling(data: dict, out_dir: Path) -> None:
     print("  Saved: 03_latency_scaling.png")
 
 
+def plot_hardware_comparison(data: dict, out_dir: Path) -> None:
+    """Bar chart: FP32 vs FP16 memory and latency per model."""
+    models_avail = [m for m in MODELS if m in data]
+    labels = [MODEL_LABELS[m].replace("\n", " ") for m in models_avail]
+    x = np.arange(len(models_avail))
+    width = 0.35
+
+    fp32_mem = [data[m]["FP32"]["memory_mb"] for m in models_avail]
+    fp16_mem = [data[m]["FP16"]["memory_mb"] for m in models_avail]
+    fp32_lat = [data[m]["FP32"]["avg_latency_ms_per_batch"] for m in models_avail]
+    fp16_lat = [data[m]["FP16"]["avg_latency_ms_per_batch"] for m in models_avail]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
+
+    ax1.bar(x - width / 2, fp32_mem, width, label="FP32", color=COLORS["FP32"])
+    ax1.bar(x + width / 2, fp16_mem, width, label="FP16", color=COLORS["FP16"])
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(labels)
+    ax1.set_ylabel("Memory (MB)")
+    ax1.set_title("Memory: FP32 vs FP16")
+    ax1.legend()
+
+    ax2.bar(x - width / 2, fp32_lat, width, label="FP32", color=COLORS["FP32"])
+    ax2.bar(x + width / 2, fp16_lat, width, label="FP16", color=COLORS["FP16"])
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(labels)
+    ax2.set_ylabel("Latency (ms/batch)")
+    ax2.set_title("Latency: FP32 vs FP16")
+    ax2.legend()
+
+    fig.suptitle("Hardware Efficiency — FP32 vs FP16", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    fig.savefig(out_dir / "04_hardware_comparison.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print("  Saved: 04_hardware_comparison.png")
+
+
+def plot_fp16_speedup_scaling(data: dict, out_dir: Path) -> None:
+    """Line chart: FP16 speedup factor (FP32/FP16 latency) per model."""
+    models_avail = [m for m in MODELS if m in data]
+    labels = [MODEL_LABELS[m].replace("\n", " ") for m in models_avail]
+
+    speedups = [
+        data[m]["FP32"]["avg_latency_ms_per_batch"] /
+        data[m]["FP16"]["avg_latency_ms_per_batch"]
+        for m in models_avail
+    ]
+    mem_ratios = [
+        data[m]["FP32"]["memory_mb"] / data[m]["FP16"]["memory_mb"]
+        for m in models_avail
+    ]
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(labels, speedups, marker="o", color=COLORS["FP16"],
+            label="Latency speedup", linewidth=2)
+    ax.plot(labels, mem_ratios, marker="s", color=COLORS["FP32"],
+            label="Memory reduction", linewidth=2, linestyle="--")
+    ax.axhline(2.0, color="gray", linestyle=":", linewidth=1, label="2× reference")
+
+    for i, (s, r) in enumerate(zip(speedups, mem_ratios)):
+        ax.text(i, s + 0.05, f"{s:.2f}×", ha="center", va="bottom", fontsize=9)
+        ax.text(i, r - 0.12, f"{r:.2f}×", ha="center", va="top", fontsize=9,
+                color=COLORS["FP32"])
+
+    ax.set_ylabel("Speedup / Reduction factor (×)")
+    ax.set_title("FP16 Efficiency Scaling with Model Size")
+    ax.legend()
+    plt.tight_layout()
+    fig.savefig(out_dir / "05_fp16_speedup_scaling.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print("  Saved: 05_fp16_speedup_scaling.png")
+
+
+def plot_int8_degradation_scaling(data: dict, out_dir: Path) -> None:
+    """Line chart: INT8 accuracy degradation (pp) vs model size."""
+    models_avail = [m for m in MODELS if m in data]
+    labels = [MODEL_LABELS[m].replace("\n", " ") for m in models_avail]
+
+    deg_pt = [
+        data[m]["INT8-pt"]["accuracy_percent"] - data[m]["FP32"]["accuracy_percent"]
+        for m in models_avail
+    ]
+    deg_pc = [
+        data[m]["INT8-pc"]["accuracy_percent"] - data[m]["FP32"]["accuracy_percent"]
+        for m in models_avail
+    ]
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(labels, deg_pt, marker="o", color=COLORS["INT8-pt"],
+            label="INT8 per-tensor", linewidth=2)
+    ax.plot(labels, deg_pc, marker="s", color=COLORS["INT8-pc"],
+            label="INT8 per-channel", linewidth=2)
+    ax.axhline(0, color="gray", linestyle="--", linewidth=1)
+
+    for i, (pt, pc) in enumerate(zip(deg_pt, deg_pc)):
+        ax.text(i, pt - 0.01, f"{pt:+.3f}", ha="center", va="top", fontsize=9,
+                color=COLORS["INT8-pt"])
+        ax.text(i, pc + 0.01, f"{pc:+.3f}", ha="center", va="bottom", fontsize=9,
+                color=COLORS["INT8-pc"])
+
+    ax.set_ylabel("Δ Accuracy vs FP32 (pp)")
+    ax.set_title("INT8 Accuracy Degradation Scaling with Model Size")
+    ax.legend()
+    plt.tight_layout()
+    fig.savefig(out_dir / "06_int8_degradation_scaling.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print("  Saved: 06_int8_degradation_scaling.png")
+
+
 def write_summary_table(data: dict, out_dir: Path) -> None:
     """Write markdown summary table."""
     models_avail = [m for m in MODELS if m in data]
@@ -209,6 +318,9 @@ def main():
     plot_degradation_heatmap(data, out_dir)
     plot_memory_scaling(data, out_dir)
     plot_latency_scaling(data, out_dir)
+    plot_hardware_comparison(data, out_dir)
+    plot_fp16_speedup_scaling(data, out_dir)
+    plot_int8_degradation_scaling(data, out_dir)
     write_summary_table(data, out_dir)
 
     print(f"\nAll outputs saved to {out_dir}")
