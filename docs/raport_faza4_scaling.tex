@@ -42,6 +42,8 @@
 \definecolor{fp16color}{HTML}{009E73}
 \definecolor{int8ptcolor}{HTML}{E69F00}
 \definecolor{int8pccolor}{HTML}{D55E00}
+\definecolor{fp8ptcolor}{HTML}{CC79A7}
+\definecolor{fp8pccolor}{HTML}{56B4E9}
 \definecolor{lightgray}{HTML}{F4F4F4}
 \definecolor{posgreen}{HTML}{1A7A1A}
 \definecolor{negred}{HTML}{C0392B}
@@ -157,14 +159,17 @@ PyTorch~2.10.0+cu128.
 
 \subsection{Metodologie}
 
-Protocolul experimental este identic cu cel din Fazele~1--3:
+Protocolul experimental extinde Fazele~1--3 cu două formate FP8 native:
 \begin{itemize}
   \item Evaluare pe toate cele 50\,000 de imagini ImageNet-1k validation;
   \item \textbf{FP32} — baseline, model \texttt{model.float()};
   \item \textbf{FP16} — \texttt{model.half()}, static;
   \item \textbf{INT8-pt} — cuantizare weight-only per-tensor, scalare liniară,
     skip LayerNorm și head de clasificare;
-  \item \textbf{INT8-pc} — cuantizare weight-only per-channel (per rând).
+  \item \textbf{INT8-pc} — cuantizare weight-only per-channel (per rând);
+  \item \textbf{FP8-pt} — stocare \texttt{float8\_e4m3fn} per-tensor,
+    dequantizare la fiecare forward pass (clasa \texttt{FP8Linear});
+  \item \textbf{FP8-pc} — stocare \texttt{float8\_e4m3fn} per-channel.
 \end{itemize}
 
 Latențele sunt raportate ca \emph{medie per batch} (ms/batch), excluzând
@@ -186,21 +191,25 @@ FP32 la 330 MB).
     \textbf{Format} & \textbf{Accuracy} & \textbf{$\Delta$ FP32 (pp)} &
     \textbf{Memorie (MB)} & \textbf{Latență (ms/batch)} \\
     \midrule
-    \textcolor{fp32color}{\textbf{FP32}}    & 75.454\% & ---                   & 21.81 & 29.64 \\
-    \textcolor{fp16color}{\textbf{FP16}}    & 75.458\% & \dpos{+0.004}         & 10.91 & \phantom{0}8.96 \\
-    \textcolor{int8ptcolor}{\textbf{INT8-pt}} & 75.128\% & \dneg{$-$0.326}    & \phantom{0}6.62 & 30.69 \\
-    \textcolor{int8pccolor}{\textbf{INT8-pc}} & 75.418\% & \dneg{$-$0.036}    & \phantom{0}6.70 & 30.67 \\
+    \textcolor{fp32color}{\textbf{FP32}}    & 75.454\% & ---                   & 21.81 & 28.4 \\
+    \textcolor{fp16color}{\textbf{FP16}}    & 75.458\% & \dpos{+0.004}         & 10.91 & \phantom{0}9.0 \\
+    \textcolor{int8ptcolor}{\textbf{INT8-pt}} & 75.128\% & \dneg{$-$0.326}    & \phantom{0}6.62 & 30.0 \\
+    \textcolor{int8pccolor}{\textbf{INT8-pc}} & 75.418\% & \dneg{$-$0.036}    & \phantom{0}6.70 & 29.3 \\
+    \textcolor{fp8ptcolor}{\textbf{FP8-pt}}   & 75.258\% & \dneg{$-$0.196}   & \phantom{0}6.62 & 30.1 \\
+    \textcolor{fp8pccolor}{\textbf{FP8-pc}}   & 75.352\% & \dneg{$-$0.102}   & \phantom{0}6.70 & 29.5 \\
     \bottomrule
   \end{tabular}
   \label{tab:tiny}
 \end{table}
 
 \textbf{Observații ViT-Tiny/A100:}
-FP16 obține un speedup de $\mathbf{3.31\times}$ față de FP32
+FP16 obține un speedup de $\mathbf{3.15\times}$ față de FP32
 (vs.\ $1.22\times$ pe M4~MPS), confirmând că A100 utilizează eficient
-tensor cores. Reducerea de memorie este $2.00\times$ (exact, conform
-așteptărilor teoretice). INT8-pc reduce degradarea de la $-0.326$~pp la
-$-0.036$~pp, menținând pattern-ul stabilit în Faza~3.
+tensor cores. INT8-pc reduce degradarea de la $-0.326$~pp la $-0.036$~pp.
+FP8-pt ($-0.196$~pp) este mai bun decât INT8-pt ($-0.326$~pp) dar mai slab
+decât INT8-pc; FP8-pc ($-0.102$~pp) se situează între cele două INT8.
+Latența FP8 este similară cu INT8 --- ambele dequantizează la FP32
+înainte de matmul, deci nu există kernel nativ mai rapid.
 
 \subsection{ViT-Small (21.7M parametri)}
 
@@ -212,21 +221,24 @@ $-0.036$~pp, menținând pattern-ul stabilit în Faza~3.
     \textbf{Format} & \textbf{Accuracy} & \textbf{$\Delta$ FP32 (pp)} &
     \textbf{Memorie (MB)} & \textbf{Latență (ms/batch)} \\
     \midrule
-    \textcolor{fp32color}{\textbf{FP32}}    & 81.382\% & ---                  & 84.12  & 73.09 \\
-    \textcolor{fp16color}{\textbf{FP16}}    & 81.394\% & \dpos{+0.012}        & 42.06  & 15.04 \\
-    \textcolor{int8ptcolor}{\textbf{INT8-pt}} & 81.296\% & \dneg{$-$0.086}   & 23.37  & 73.77 \\
-    \textcolor{int8pccolor}{\textbf{INT8-pc}} & 81.396\% & \dpos{+0.014}     & 23.53  & 73.65 \\
+    \textcolor{fp32color}{\textbf{FP32}}    & 81.382\% & ---                  & 84.12  & 72.9 \\
+    \textcolor{fp16color}{\textbf{FP16}}    & 81.394\% & \dpos{+0.012}        & 42.06  & 15.4 \\
+    \textcolor{int8ptcolor}{\textbf{INT8-pt}} & 81.296\% & \dneg{$-$0.086}   & 23.37  & 73.8 \\
+    \textcolor{int8pccolor}{\textbf{INT8-pc}} & 81.396\% & \dpos{+0.014}     & 23.53  & 73.6 \\
+    \textcolor{fp8ptcolor}{\textbf{FP8-pt}}   & 81.374\% & \dneg{$-$0.008}  & 23.37  & 73.3 \\
+    \textcolor{fp8pccolor}{\textbf{FP8-pc}}   & 81.306\% & \dneg{$-$0.076}  & 23.53  & 73.3 \\
     \bottomrule
   \end{tabular}
   \label{tab:small}
 \end{table}
 
 \textbf{Observații ViT-Small/A100:}
-FP16 atinge $\mathbf{4.86\times}$ speedup. Remarcabil: \textbf{INT8-pc
-depășește FP32 cu +0.014~pp} --- primul caz din studiu în care cuantizarea
-îmbunătățește marginal acuratețea față de baseline, consistent cu
-observația din MLP-only INT8 pe ViT-Tiny (+0.030~pp). Degradarea INT8-pt
-scade la $-0.086$~pp față de $-0.322$~pp pe ViT-Tiny.
+FP16 atinge $\mathbf{4.74\times}$ speedup. INT8-pc depășește FP32 cu
+$+0.014$~pp. FP8-pt ($-0.008$~pp) este remarcabil de precis pe ViT-Small
+--- mai bun decât INT8-pt și chiar mai bun decât FP8-pc ($-0.076$~pp).
+Acesta este singurul model din studiu unde FP8 per-tensor surclasează FP8
+per-channel, sugerând că distribuția ponderilor ViT-Small se potrivește
+bine cu grila logaritmică a FP8 fără a necesita scale individuale.
 
 \subsection{ViT-Base (86.6M parametri)}
 
@@ -238,31 +250,35 @@ scade la $-0.086$~pp față de $-0.322$~pp pe ViT-Tiny.
     \textbf{Format} & \textbf{Accuracy} & \textbf{$\Delta$ FP32 (pp)} &
     \textbf{Memorie (MB)} & \textbf{Latență (ms/batch)} \\
     \midrule
-    \textcolor{fp32color}{\textbf{FP32}}    & 85.102\% & ---                  & 330.23 & 128.77 \\
-    \textcolor{fp16color}{\textbf{FP16}}    & 85.110\% & \dpos{+0.008}        & 165.12 & \phantom{0}18.24 \\
-    \textcolor{int8ptcolor}{\textbf{INT8-pt}} & 85.080\% & \dneg{$-$0.022}   & \phantom{0}87.23 & 129.78 \\
-    \textcolor{int8pccolor}{\textbf{INT8-pc}} & 85.100\% & \dneg{$-$0.002}   & \phantom{0}87.55 & 129.88 \\
+    \textcolor{fp32color}{\textbf{FP32}}    & 85.102\% & ---                  & 330.23 & 128.6 \\
+    \textcolor{fp16color}{\textbf{FP16}}    & 85.110\% & \dpos{+0.008}        & 165.12 & \phantom{0}18.3 \\
+    \textcolor{int8ptcolor}{\textbf{INT8-pt}} & 85.080\% & \dneg{$-$0.022}   & \phantom{0}87.23 & 129.8 \\
+    \textcolor{int8pccolor}{\textbf{INT8-pc}} & 85.100\% & \dneg{$-$0.002}   & \phantom{0}87.55 & 130.0 \\
+    \textcolor{fp8ptcolor}{\textbf{FP8-pt}}   & 85.046\% & \dneg{$-$0.056}  & \phantom{0}87.23 & 129.9 \\
+    \textcolor{fp8pccolor}{\textbf{FP8-pc}}   & 85.094\% & \dneg{$-$0.008}  & \phantom{0}87.55 & 130.2 \\
     \bottomrule
   \end{tabular}
   \label{tab:base}
 \end{table}
 
 \textbf{Observații ViT-Base/A100:}
-FP16 atinge $\mathbf{7.06\times}$ speedup --- cel mai mare speedup din
-întreg studiul. Degradarea INT8-pc coboară la o valoare aproape neglijabilă
-de $-0.002$~pp, practic identică cu FP32. INT8-pt menține $-0.022$~pp,
-extrem de redus față de $-0.322$~pp observat pe ViT-Tiny.
+FP16 atinge $\mathbf{7.03\times}$ speedup --- cel mai mare speedup din
+întreg studiul. INT8-pc pierde doar $-0.002$~pp, practic identic cu FP32.
+FP8-pc ($-0.008$~pp) se comportă excelent, aproape la nivelul INT8-pc.
+FP8-pt ($-0.056$~pp) este mai slab comparativ, dar rămâne mult mai bun
+decât INT8-pt de la ViT-Tiny. La modele mari, FP8-pc revine la pattern-ul
+normal (superior per-tensor), spre deosebire de ViT-Small.
 
 % ===========================================================================
 \section{Tabel comparativ cross-model}
 % ===========================================================================
 
 Tabelul~\ref{tab:crossmodel} centralizează toate rezultatele Fazei~4
-pentru o comparație directă între cele trei arhitecturi și patru formate.
+pentru o comparație directă între cele trei arhitecturi și șase formate.
 
 \begin{table}[H]
   \centering
-  \caption{Tabel comparativ cross-model --- Faza~4 (NVIDIA A100)}
+  \caption{Tabel comparativ cross-model --- Faza~4 (NVIDIA A100, 16 mai 2026)}
   \resizebox{\linewidth}{!}{%
   \begin{tabular}{llrr>{\raggedleft\arraybackslash}p{1.8cm}>{\raggedleft\arraybackslash}p{2.2cm}}
     \toprule
@@ -270,23 +286,29 @@ pentru o comparație directă între cele trei arhitecturi și patru formate.
     \textbf{Accuracy} & \textbf{$\Delta$ FP32 (pp)} &
     \textbf{Memorie (MB)} & \textbf{Latență (ms/batch)} \\
     \midrule
-    \multirow{4}{*}{\textbf{ViT-Tiny} (5.7M)}
-      & \textcolor{fp32color}{FP32}    & 75.454\% & ---           & 21.81  &  29.64 \\
-      & \textcolor{fp16color}{FP16}    & 75.458\% & \dpos{+0.004} & 10.91  &   8.96 \\
-      & \textcolor{int8ptcolor}{INT8-pt} & 75.128\% & \dneg{$-$0.326} & 6.62 & 30.69 \\
-      & \textcolor{int8pccolor}{INT8-pc} & 75.418\% & \dneg{$-$0.036} & 6.70 & 30.67 \\
+    \multirow{6}{*}{\textbf{ViT-Tiny} (5.7M)}
+      & \textcolor{fp32color}{FP32}      & 75.454\% & ---             & 21.81 &  28.4 \\
+      & \textcolor{fp16color}{FP16}      & 75.458\% & \dpos{+0.004}   & 10.91 &   9.0 \\
+      & \textcolor{int8ptcolor}{INT8-pt} & 75.128\% & \dneg{$-$0.326} &  6.62 &  30.0 \\
+      & \textcolor{int8pccolor}{INT8-pc} & 75.418\% & \dneg{$-$0.036} &  6.70 &  29.3 \\
+      & \textcolor{fp8ptcolor}{FP8-pt}   & 75.258\% & \dneg{$-$0.196} &  6.62 &  30.1 \\
+      & \textcolor{fp8pccolor}{FP8-pc}   & 75.352\% & \dneg{$-$0.102} &  6.70 &  29.5 \\
     \midrule
-    \multirow{4}{*}{\textbf{ViT-Small} (22M)}
-      & \textcolor{fp32color}{FP32}    & 81.382\% & ---           & 84.12  &  73.09 \\
-      & \textcolor{fp16color}{FP16}    & 81.394\% & \dpos{+0.012} & 42.06  &  15.04 \\
-      & \textcolor{int8ptcolor}{INT8-pt} & 81.296\% & \dneg{$-$0.086} & 23.37 & 73.77 \\
-      & \textcolor{int8pccolor}{INT8-pc} & 81.396\% & \dpos{+0.014} & 23.53 & 73.65 \\
+    \multirow{6}{*}{\textbf{ViT-Small} (22M)}
+      & \textcolor{fp32color}{FP32}      & 81.382\% & ---             & 84.12 &  72.9 \\
+      & \textcolor{fp16color}{FP16}      & 81.394\% & \dpos{+0.012}   & 42.06 &  15.4 \\
+      & \textcolor{int8ptcolor}{INT8-pt} & 81.296\% & \dneg{$-$0.086} & 23.37 &  73.8 \\
+      & \textcolor{int8pccolor}{INT8-pc} & 81.396\% & \dpos{+0.014}   & 23.53 &  73.6 \\
+      & \textcolor{fp8ptcolor}{FP8-pt}   & 81.374\% & \dneg{$-$0.008} & 23.37 &  73.3 \\
+      & \textcolor{fp8pccolor}{FP8-pc}   & 81.306\% & \dneg{$-$0.076} & 23.53 &  73.3 \\
     \midrule
-    \multirow{4}{*}{\textbf{ViT-Base} (86M)}
-      & \textcolor{fp32color}{FP32}    & 85.102\% & ---           & 330.23 & 128.77 \\
-      & \textcolor{fp16color}{FP16}    & 85.110\% & \dpos{+0.008} & 165.12 &  18.24 \\
-      & \textcolor{int8ptcolor}{INT8-pt} & 85.080\% & \dneg{$-$0.022} & 87.23 & 129.78 \\
-      & \textcolor{int8pccolor}{INT8-pc} & 85.100\% & \dneg{$-$0.002} & 87.55 & 129.88 \\
+    \multirow{6}{*}{\textbf{ViT-Base} (86M)}
+      & \textcolor{fp32color}{FP32}      & 85.102\% & ---             & 330.23 & 128.6 \\
+      & \textcolor{fp16color}{FP16}      & 85.110\% & \dpos{+0.008}   & 165.12 &  18.3 \\
+      & \textcolor{int8ptcolor}{INT8-pt} & 85.080\% & \dneg{$-$0.022} &  87.23 & 129.8 \\
+      & \textcolor{int8pccolor}{INT8-pc} & 85.100\% & \dneg{$-$0.002} &  87.55 & 130.0 \\
+      & \textcolor{fp8ptcolor}{FP8-pt}   & 85.046\% & \dneg{$-$0.056} &  87.23 & 129.9 \\
+      & \textcolor{fp8pccolor}{FP8-pc}   & 85.094\% & \dneg{$-$0.008} &  87.55 & 130.2 \\
     \bottomrule
   \end{tabular}}%
   \label{tab:crossmodel}
@@ -296,9 +318,8 @@ pentru o comparație directă între cele trei arhitecturi și patru formate.
   \centering
   \includegraphics[width=\linewidth]{%
     ../results/Phase4/cross_model_comparison/00_accuracy_cross_model.png}
-  \caption{Acuratețe Top-1 (\%) pentru toate cele 3 modele și 4 formate,
-    evaluare pe NVIDIA~A100. Barele sunt grupate pe model; în cadrul
-    fiecărui grup, ordinea este FP32, FP16, INT8-pt, INT8-pc.}
+  \caption{Acuratețe Top-1 (\%) pentru toate cele 3 modele și formatele
+    FP32/FP16/INT8-pt/INT8-pc, evaluare pe NVIDIA~A100.}
   \label{fig:accuracy-cross}
 \end{figure}
 
@@ -312,6 +333,78 @@ pentru o comparație directă între cele trei arhitecturi și patru formate.
     Cel mai întunecat roșu apare la INT8-pt / ViT-Tiny ($-0.326$~pp).}
   \label{fig:heatmap}
 \end{figure}
+
+% ===========================================================================
+\section{Evaluare FP8 Native (float8\_e4m3fn)}
+% ===========================================================================
+
+FP8 E4M3FN a fost evaluat pe toate cele trei modele folosind clasa
+\texttt{FP8Linear} (stocare reală \texttt{float8\_e4m3fn}, dequantizare
+la fiecare forward pass, skip LayerNorm și head). Scriptul
+\texttt{evaluate\_fp8\_native.py} a rulat pe același A100 pe 16 mai 2026
+imediat după evaluarea INT8.
+
+\subsection{Rezultate FP8 cross-model}
+
+\begin{table}[H]
+  \centering
+  \caption{Comparație FP8 vs INT8 per-tensor și per-channel (NVIDIA A100)}
+  \small
+  \begin{tabular}{llrrr}
+    \toprule
+    \textbf{Model} & \textbf{Format} & \textbf{Accuracy} &
+    \textbf{$\Delta$ FP32 (pp)} & \textbf{Memorie (MB)} \\
+    \midrule
+    \multirow{4}{*}{ViT-Tiny}
+      & \textcolor{int8ptcolor}{INT8-pt} & 75.128\% & \dneg{$-$0.326} & 6.62 \\
+      & \textcolor{fp8ptcolor}{FP8-pt}   & 75.258\% & \dneg{$-$0.196} & 6.62 \\
+      & \textcolor{int8pccolor}{INT8-pc} & 75.418\% & \dneg{$-$0.036} & 6.70 \\
+      & \textcolor{fp8pccolor}{FP8-pc}   & 75.352\% & \dneg{$-$0.102} & 6.70 \\
+    \midrule
+    \multirow{4}{*}{ViT-Small}
+      & \textcolor{int8ptcolor}{INT8-pt} & 81.296\% & \dneg{$-$0.086} & 23.37 \\
+      & \textcolor{fp8ptcolor}{FP8-pt}   & 81.374\% & \dneg{$-$0.008} & 23.37 \\
+      & \textcolor{int8pccolor}{INT8-pc} & 81.396\% & \dpos{+0.014}   & 23.53 \\
+      & \textcolor{fp8pccolor}{FP8-pc}   & 81.306\% & \dneg{$-$0.076} & 23.53 \\
+    \midrule
+    \multirow{4}{*}{ViT-Base}
+      & \textcolor{int8ptcolor}{INT8-pt} & 85.080\% & \dneg{$-$0.022} & 87.23 \\
+      & \textcolor{fp8ptcolor}{FP8-pt}   & 85.046\% & \dneg{$-$0.056} & 87.23 \\
+      & \textcolor{int8pccolor}{INT8-pc} & 85.100\% & \dneg{$-$0.002} & 87.55 \\
+      & \textcolor{fp8pccolor}{FP8-pc}   & 85.094\% & \dneg{$-$0.008} & 87.55 \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:fp8cross}
+\end{table}
+
+\subsection{Observații FP8}
+
+\textbf{Memoria identică cu INT8.} FP8 și INT8 stochează 1 byte/parametru,
+deci reducerea de memorie față de FP32 este aceeași ($\approx 3.3$--$3.8\times$).
+
+\textbf{Latența identică cu INT8.} Implementarea dequantizează la FP32
+înainte de \texttt{F.linear}, deci nu există kernel FP8 GEMM nativ.
+Pe A100, latența FP8 este practic identică cu INT8.
+
+\textbf{FP8-pt bate INT8-pt pe Tiny și Small.} Distribuția logaritmică
+a FP8 gestionează mai bine outlierii față de scalarea uniformă a INT8
+per-tensor. Câștigul: $+0.130$~pp pe Tiny, $+0.078$~pp pe Small.
+Pe Base diferența se inversează ($-0.034$~pp), deoarece modelele mari
+au distribuții mai uniforme unde INT8 uniform funcționează bine.
+
+\textbf{Anomalia ViT-Small: FP8-pt $>$ FP8-pc.} Pe ViT-Tiny și ViT-Base,
+FP8-pc este mai precis decât FP8-pt (pattern normal). Pe ViT-Small,
+FP8-pt ($-0.008$~pp) surclasează FP8-pc ($-0.076$~pp) --- cel mai bun
+rezultat FP8 din întreg studiul. O posibilă explicație: la ViT-Small
+(embed\_dim=384), ponderile de pe fiecare canal au variații relativ mari
+între canale, iar scale-urile per-channel FP8 introduc mai mult zgomot
+de cuantizare decât un scalar global bine ales.
+
+\textbf{FP8 pe hardware nativ (H100).} Pe GPU-uri Hopper (compute
+capability~$\geq 9.0$), kernelele FP8 GEMM sunt disponibile nativ.
+Latența FP8 ar putea fi comparabilă cu FP16. Rezultatele de acuratețe
+sunt valide pe orice hardware; latența raportată reflectă doar
+implementarea software actuală.
 
 % ===========================================================================
 \section{Analiză: menținerea pattern-urilor la scară mai mare}
@@ -596,13 +689,14 @@ Pe baza rezultatelor din Fazele~1--4 și a experimentelor adiționale
 
 \subsection{Ierarhia formatelor --- concluzie generală}
 
-Din perspectiva acurateței (cel mai important criteriu în producție):
+Din perspectiva acurateței (cel mai important criteriu în producție),
+valorile reflectă intervalul observat pe NVIDIA A100 (Tiny--Base):
 {\small\[
   \underbrace{\text{INT8-mlp-pc}}_{\text{+0.030 pp}} \geq
   \underbrace{\text{FP16}}_{\approx 0} \approx
-  \underbrace{\text{INT8-pc}}_{-0.002\text{--}-0.036} >
-  \underbrace{\text{FP8-pc}}_{-0.100} >
-  \underbrace{\text{FP8-pt}}_{-0.198} >
+  \underbrace{\text{INT8-pc}}_{-0.002\text{--}-0.036} \approx
+  \underbrace{\text{FP8-pc}}_{-0.008\text{--}-0.102} >
+  \underbrace{\text{FP8-pt}}_{-0.008\text{--}-0.196} >
   \underbrace{\text{INT8-pt}}_{-0.022\text{--}-0.326}
 \]}
 
@@ -645,9 +739,11 @@ puțin afectate de cuantizare, cu degradări sub $0.02$~pp.
     Warmup & 3 batch-uri excluse din timing \\
     Latență & medie pe toate batch-urile post-warmup \\
     \midrule
-    Script principal & \texttt{scripts/phase4/evaluate\_model.py} \\
+    Script INT8/FP16 & \texttt{scripts/phase4/evaluate\_model.py} \\
+    Script FP8 & \texttt{scripts/phase4/evaluate\_fp8\_native.py} \\
     Script comparație & \texttt{scripts/phase4/compare\_cross\_model.py} \\
-    Rezultate & \texttt{results/Phase4/\allowbreak<model>/\allowbreak metrics/results.json} \\
+    Rezultate INT8 & \texttt{results/Phase4/<model>/metrics/results.json} \\
+    Rezultate FP8 & \texttt{results/Phase4/<model>/fp8\_native/metrics/fp8\_results.json} \\
     \bottomrule
   \end{tabular}
   \label{tab:config}

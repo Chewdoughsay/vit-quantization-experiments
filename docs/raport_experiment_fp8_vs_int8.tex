@@ -332,6 +332,68 @@ se face pe CPU, iar transferul CPU→MPS adaugă latență la fiecare strat
 situația s-ar inversa --- FP8 ar putea fi mai rapid decât INT8.
 
 % ===========================================================================
+\section{Validare pe NVIDIA A100 (CUDA)}
+% ===========================================================================
+
+Rezultatele de mai sus au fost obținute pe Apple~M4~MPS (29 martie 2026).
+Pe 16 mai 2026, același experiment a fost reprodus pe NVIDIA~A100 (Google
+Colab Pro, PyTorch~2.10.0+cu128) ca parte din Faza~4 (\texttt{evaluate\_fp8\_native.py}).
+
+\subsection{Reproducibilitatea acurateței}
+
+\begin{table}[H]
+  \centering
+  \caption{Comparație acuratețe MPS vs CUDA --- ViT-Tiny, ImageNet-1k}
+  \begin{tabular}{lrrrr}
+    \toprule
+    \textbf{Metodă} & \textbf{M4 MPS} & \textbf{A100 CUDA} & \textbf{Diferență} \\
+    \midrule
+    FP32    & 75.456\% & 75.454\% & $-0.002$~pp \\
+    INT8-pt & 75.134\% & 75.128\% & $-0.006$~pp \\
+    INT8-pc & 75.424\% & 75.418\% & $-0.006$~pp \\
+    FP8-pt  & 75.258\% & 75.258\% & $\phantom{-}0.000$~pp \\
+    FP8-pc  & 75.356\% & 75.352\% & $-0.004$~pp \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:mps_vs_cuda_acc}
+\end{table}
+
+Diferențele sunt sub $0.01$~pp la toate configurațiile ---
+în limita variabilității numerice normale între platforme.
+Acuratețea FP8 este reproductibilă independent de hardware.
+
+\subsection{Latența: MPS vs CUDA}
+
+\begin{table}[H]
+  \centering
+  \caption{Latență (ms/batch, bs=128) --- M4 MPS vs A100 CUDA}
+  \begin{tabular}{lrrr}
+    \toprule
+    \textbf{Metodă} & \textbf{M4 MPS} & \textbf{A100 CUDA} & \textbf{Speedup CUDA} \\
+    \midrule
+    FP32    & 166.5 ms & 29.8 ms & $5.6\times$ \\
+    INT8-pt & 210.5 ms & 30.3 ms & $6.9\times$ \\
+    INT8-pc & 202.8 ms & 29.9 ms & $6.8\times$ \\
+    FP8-pt  & 250.7 ms & 30.1 ms & $8.3\times$ \\
+    FP8-pc  & 274.8 ms & 29.5 ms & $9.3\times$ \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:mps_vs_cuda_lat}
+\end{table}
+
+Două observații importante:
+\begin{enumerate}
+  \item \textbf{Pe M4~MPS, FP8 este semnificativ mai lent} (FP8-pc: $274.8$~ms
+    față de FP32: $166.5$~ms, overhead $+65\%$). Cauza: buffer-urile
+    \texttt{float8\_e4m3fn} nu sunt suportate nativ pe MPS și sunt stocate
+    pe CPU, introducând transfer CPU$\to$MPS la fiecare forward pass.
+  \item \textbf{Pe A100, FP8 are latență identică cu FP32 și INT8} ($\approx
+    29$--$30$~ms/batch). Eliminarea transferului CPU$\to$MPS elimină overhead-ul.
+    Aceasta confirmă că dezavantajul de latență FP8 este specific MPS, nu
+    arhitectural.
+\end{enumerate}
+
+% ===========================================================================
 \section{Concluzii}
 % ===========================================================================
 
@@ -351,15 +413,16 @@ situația s-ar inversa --- FP8 ar putea fi mai rapid decât INT8.
   \item \textbf{Memoria identică:} FP8 și INT8 ocupă același spațiu
     ($6.62$--$6.70$~MB), deoarece ambele stochează 1 byte per parametru.
 
-  \item \textbf{FP8 necesită hardware dedicat:} Pe Apple M4, latența
-    FP8 este $35\%$ mai mare față de INT8. Beneficiile reale ale FP8
-    (speedup hardware + precizie îmbunătățită față de INT8-pt) se
-    manifestă pe GPU-uri Hopper (H100) cu suport nativ pentru FP8 GEMM.
+  \item \textbf{Latența FP8 depinde de hardware:} Pe Apple~M4~MPS,
+    FP8-pc este cu $65\%$ mai lent decât FP32 (transfer CPU$\to$MPS).
+    Pe NVIDIA~A100, latența FP8 este identică cu FP32 și INT8 ($\approx
+    30$~ms/batch), confirmat în Faza~4. Dezavantajul de latență FP8
+    este specific MPS, nu arhitectural.
 
-  \item \textbf{Recomandare generală:} Fără hardware FP8 nativ,
-    INT8-pc rămâne soluția optimă. Cu hardware H100, FP8-pt devine
-    competitiv --- mai simplu de implementat decât per-channel și
-    cu acuratețe mai bună decât INT8-pt.
+  \item \textbf{Recomandare generală:} Fără hardware FP8 GEMM nativ
+    (H100), INT8-pc rămâne soluția optimă ca acuratețe. Pe A100,
+    FP8-pt este viabil din perspectiva latenței și bate INT8-pt ca
+    acuratețe, fără a necesita scale per-channel.
 \end{enumerate}
 
 % ===========================================================================
