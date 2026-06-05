@@ -75,10 +75,10 @@ PLOTS_DIR   = RESULTS_DIR / "plots"
 
 COLORS = {
     "FP32":             "#0072B2",
-    "INT8-pt (full)":   "#E69F00",
-    "INT8-pc (full)":   "#D55E00",
-    "INT8-mlp-pt":      "#56B4E9",
-    "INT8-mlp-pc":      "#009E73",
+    "INT8-pt (full)":   "#E69F00",   # int8ptcolor din main.tex
+    "INT8-pc (full)":   "#D55E00",   # int8pccolor din main.tex
+    "INT8-mlp-pt":      "#56B4E9",   # fp8pccolor (albastru deschis) — contrast cu galben
+    "INT8-mlp-pc":      "#009E73",   # verde — contrast cu rosu-portocaliu
 }
 
 plt.rcParams.update({
@@ -264,6 +264,57 @@ def generate_plots(results: dict) -> None:
     fig.savefig(PLOTS_DIR / "01_degradation.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
+    # ── 03 Full vs MLP-only grouped ──────────────────────────────────────
+    # 4 bars in 2 groups (Per-tensor | Per-channel).
+    # Each bar has its own color + legend entry — no ambiguity.
+    fig, ax = plt.subplots(figsize=(9, 5))
+    fp32_acc = results["FP32"]["accuracy_percent"]
+    x = np.arange(2)
+    w = 0.32
+
+    vals = {
+        "INT8-pt (full)": results["INT8-pt (full)"]["accuracy_percent"],
+        "INT8-mlp-pt":    results["INT8-mlp-pt"]["accuracy_percent"],
+        "INT8-pc (full)": results["INT8-pc (full)"]["accuracy_percent"],
+        "INT8-mlp-pc":    results["INT8-mlp-pc"]["accuracy_percent"],
+    }
+    delta = {k: v - fp32_acc for k, v in vals.items()}
+
+    b_full_pt = ax.bar(x[0] - w / 2, vals["INT8-pt (full)"], w,
+                       color=COLORS["INT8-pt (full)"],
+                       label="INT8-pt, 48 straturi (complet)", edgecolor="white")
+    b_mlp_pt  = ax.bar(x[0] + w / 2, vals["INT8-mlp-pt"],    w,
+                       color=COLORS["INT8-mlp-pt"],
+                       label="INT8-mlp-pt, 24 straturi (MLP-only)", edgecolor="white")
+    b_full_pc = ax.bar(x[1] - w / 2, vals["INT8-pc (full)"], w,
+                       color=COLORS["INT8-pc (full)"],
+                       label="INT8-pc, 48 straturi (complet)", edgecolor="white")
+    b_mlp_pc  = ax.bar(x[1] + w / 2, vals["INT8-mlp-pc"],    w,
+                       color=COLORS["INT8-mlp-pc"],
+                       label="INT8-mlp-pc, 24 straturi (MLP-only)", edgecolor="white")
+
+    ax.axhline(fp32_acc, color=COLORS["FP32"], linewidth=1.5, linestyle="--",
+               label=f"FP32 = {fp32_acc:.3f}%")
+    ax.set_xticks(x)
+    ax.set_xticklabels(["Per-tensor", "Per-channel"], fontsize=12)
+    ax.set_ylabel("Top-1 Accuracy (%)")
+    ax.set_title("Full quantization vs MLP-only\nper granularitate (per-tensor / per-channel)")
+    ax.legend(loc="lower right", fontsize=9)
+    ax.set_ylim(74.8, 75.7)
+
+    for bar, key in [(b_full_pt, "INT8-pt (full)"), (b_mlp_pt, "INT8-mlp-pt"),
+                     (b_full_pc, "INT8-pc (full)"), (b_mlp_pc, "INT8-mlp-pc")]:
+        v = vals[key]
+        d = delta[key]
+        ax.text(bar[0].get_x() + bar[0].get_width() / 2,
+                v + 0.008,
+                f"{v:.3f}%\n({d:+.3f}pp)",
+                ha="center", va="bottom", fontsize=8.5)
+
+    plt.tight_layout()
+    fig.savefig(PLOTS_DIR / "03_full_vs_mlp_grouped.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
     print(f"  Plots saved to {PLOTS_DIR}")
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -373,4 +424,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if "--plots-only" in sys.argv:
+        import json as _json
+        _p = Path("results/experiments/mlp_only_int8/metrics/results.json")
+        with open(_p) as _f:
+            _data = _json.load(_f)
+        generate_plots(_data["results"])
+        print("Plots regenerated from saved JSON.")
+    else:
+        main()

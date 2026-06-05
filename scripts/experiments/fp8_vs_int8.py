@@ -283,7 +283,7 @@ COLORS = {
     "INT8-pt": "#E69F00",
     "INT8-pc": "#D55E00",
     "FP8-pt":  "#CC79A7",
-    "FP8-pc":  "#009E73",
+    "FP8-pc":  "#56B4E9",   # matches fp8pccolor in main.tex
 }
 
 plt.rcParams.update({
@@ -348,33 +348,49 @@ def generate_plots(results: dict) -> None:
     plt.close(fig)
 
     # ── 02 Grouped: INT8 vs FP8 per granularity ───────────────────────────
+    # Each of the 4 bars has its own color + legend entry so the reader
+    # can identify every bar without ambiguity.
     fig, ax = plt.subplots(figsize=(9, 5))
-    groups = ["Per-tensor", "Per-channel"]
-    int8_accs = [results["INT8-pt"]["accuracy_percent"],
-                 results["INT8-pc"]["accuracy_percent"]]
-    fp8_accs  = [results["FP8-pt"]["accuracy_percent"],
-                 results["FP8-pc"]["accuracy_percent"]]
-    x = np.arange(2)
-    w = 0.3
-    b1 = ax.bar(x - w / 2, int8_accs, w, label="INT8",
-                color=["#E69F00", "#D55E00"], edgecolor="white")
-    b2 = ax.bar(x + w / 2, fp8_accs,  w, label="FP8 E4M3FN",
-                color=["#CC79A7", "#009E73"], edgecolor="white")
+    x = np.arange(2)   # Per-tensor | Per-channel
+    w = 0.32
+
+    vals = {
+        "INT8-pt": results["INT8-pt"]["accuracy_percent"],
+        "FP8-pt":  results["FP8-pt"]["accuracy_percent"],
+        "INT8-pc": results["INT8-pc"]["accuracy_percent"],
+        "FP8-pc":  results["FP8-pc"]["accuracy_percent"],
+    }
+    delta = {k: v - fp32_acc for k, v in vals.items()}
+
+    b_int8_pt = ax.bar(x[0] - w / 2, vals["INT8-pt"], w,
+                       color=COLORS["INT8-pt"], label="INT8-pt", edgecolor="white")
+    b_fp8_pt  = ax.bar(x[0] + w / 2, vals["FP8-pt"],  w,
+                       color=COLORS["FP8-pt"],  label="FP8-pt",  edgecolor="white")
+    b_int8_pc = ax.bar(x[1] - w / 2, vals["INT8-pc"], w,
+                       color=COLORS["INT8-pc"], label="INT8-pc", edgecolor="white")
+    b_fp8_pc  = ax.bar(x[1] + w / 2, vals["FP8-pc"],  w,
+                       color=COLORS["FP8-pc"],  label="FP8-pc",  edgecolor="white")
+
     ax.axhline(fp32_acc, color=COLORS["FP32"], linewidth=1.5, linestyle="--",
                label=f"FP32 = {fp32_acc:.3f}%")
     ax.set_xticks(x)
-    ax.set_xticklabels(groups)
+    ax.set_xticklabels(["Per-tensor", "Per-channel"], fontsize=12)
     ax.set_ylabel("Top-1 Accuracy (%)")
     ax.set_title("INT8 vs FP8 E4M3FN\nper granularitate (per-tensor / per-channel)")
-    ax.legend()
+    ax.legend(loc="lower right")
     ax.set_ylim(74.5, 75.8)
-    for bars in [b1, b2]:
-        for bar in bars:
-            ax.text(bar.get_x() + bar.get_width() / 2,
-                    bar.get_height() + 0.01,
-                    f"{bar.get_height():.3f}%",
-                    ha="center", va="bottom", fontsize=9)
+
+    for bar, key in [(b_int8_pt, "INT8-pt"), (b_fp8_pt, "FP8-pt"),
+                     (b_int8_pc, "INT8-pc"), (b_fp8_pc, "FP8-pc")]:
+        v = vals[key]
+        d = delta[key]
+        ax.text(bar[0].get_x() + bar[0].get_width() / 2,
+                v + 0.012,
+                f"{v:.3f}%\n({d:+.3f}pp)",
+                ha="center", va="bottom", fontsize=8.5)
+
     plt.tight_layout()
+    fig.savefig(PLOTS_DIR / "02_grouped.png", dpi=300, bbox_inches="tight")
     fig.savefig(PLOTS_DIR / "02_int8_vs_fp8_grouped.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
@@ -508,4 +524,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if "--plots-only" in sys.argv:
+        import json as _json
+        _p = Path("results/experiments/fp8_vs_int8/metrics/results.json")
+        with open(_p) as _f:
+            _data = _json.load(_f)
+        generate_plots(_data["results"])
+        print("Plots regenerated from saved JSON.")
+    else:
+        main()
