@@ -29,8 +29,6 @@ imagenette2-320/
 # Jupyter notebooks (generated artifacts)
 *.ipynb
 
-# Thesis
-thesis/
 
 # Results and outputs
 results/
