@@ -22,6 +22,9 @@ ENV/
 .ipynb_checkpoints/
 *.ipynb
 
+# Thesis
+thesis/
+
 # Data (datasets — never commit)
 /data/
 imagenette2-320/
