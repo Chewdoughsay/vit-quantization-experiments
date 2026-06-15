@@ -20,7 +20,7 @@ Principala concluzie: la granularitate per-channel, INT8 pierde doar −0.032 pu
 
 ```bash
 git clone <repository-url>
-cd ViT-FP8-experiments
+cd vit-quantization-experiments
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
